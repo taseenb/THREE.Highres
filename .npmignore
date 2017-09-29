@@ -1,0 +1,14 @@
+bower_components
+node_modules
+*.log
+.DS_Store
+bundle.js
+test/
+test.js
+demo/
+docs/
+example/
+screenshots/
+.npmignore
+.tmp
+LICENSE.md
