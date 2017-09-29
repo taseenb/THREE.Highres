@@ -1,742 +1,4 @@
 (function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.Highres = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-const download = require('downloadjs')
-const PNG = require('pngjs').PNG
-const fs = require('browserify-fs')
-
-class Highres {
-  constructor (renderer, scene, camera, options) {
-    this.renderer = renderer
-    this.scene = scene
-    this.camera = camera
-    this.onStart = options ? options.onStart : undefined
-    this.onBeforeRender = options ? options.onBeforeRender : undefined
-    this.onAfterRender = options ? options.onAfterRender : undefined
-    this.onExit = options ? options.onExit : undefined
-
-    this.default = {
-      width: 2048,
-      height: 2048
-    }
-
-    this.state = {
-      mode: 'normal', // can be 'normal' (default) or 'depth'
-      maxFactor: 1,
-      originalWidth: null,
-      originalHeight: null,
-      width: null,
-      height: null,
-      factor: null,
-      busy: false
-    }
-
-    // Check GPU texture size limits and set a maximum factor allowed
-    const maxTextureSize = this.renderer.capabilities.maxTextureSize
-    const maxFactor = Math.floor(maxTextureSize / this.default.width)
-    this.set('maxTextureSize', maxTextureSize)
-    this.set('maxFactor', maxFactor)
-
-    this.initUI()
-    // this.initWebWorker()
-  }
-
-  // initWebWorker () {
-  //   this.worker = new WebWorker('js/worker/highres-worker.js')
-  //   this.worker.on('PNGready', this.downloadPNG.bind(this))
-  // }
-
-  set (key, value) {
-    this.state[key] = value
-  }
-
-  get (key) {
-    return this.state[key]
-  }
-
-  initUI () {
-    this.initDom()
-    this.initStyles()
-    this.setupKeyEvents()
-
-    this.onResize(true)
-  }
-
-  activateUI () {
-    if (this.state.activeUI) return
-    this.set('activeUI', true)
-
-    this.hideAllMessages()
-
-    // Show message box
-    document.getElementById(this.domId + '').classList.add('show')
-    document.getElementById(this.domId + '-message').classList.add('show')
-
-    // Update mode title
-    const mode = this.get('mode')
-    const diffuseTitle = document.getElementById(
-      this.domId + '-normal-mode-title'
-    )
-    const depthTitle = document.getElementById(
-      this.domId + '-depth-mode-title'
-    )
-    if (mode === 'normal') {
-      diffuseTitle.classList.add('show')
-      depthTitle.classList.remove('show')
-    } else {
-      diffuseTitle.classList.remove('show')
-      depthTitle.classList.add('show')
-    }
-
-    // Activate resize event
-    window.addEventListener('resize', this.onResize.bind(this))
-
-    console.log(
-      `Ready to render a high resolution image. 
-        This operation is CPU and memory intensive.
-        If your browser crashes, please restart it before retrying.`
-    )
-  }
-
-  deactivateUI () {
-    this.set('activeUI', false)
-
-    this.hideAllMessages()
-    document.getElementById(this.domId).classList.remove('show')
-    document.getElementById(this.domId + '-message').classList.add('show')
-
-    // Remove resize event
-    window.removeEventListener('resize', this.onResize.bind(this))
-
-    console.info('High resolution tool inactive.')
-  }
-
-  setupKeyEvents () {
-    document.body.addEventListener('keyup', e => {
-      if (this.state.busy) return
-
-      const start = () => {
-        this.activateUI()
-        // User function
-        if (this.onStart) {
-          this.onStart()
-        }
-      }
-
-      // Activate depth mode
-      if (e.key === '-') {
-        this.set('mode', 'depth')
-        start()
-      }
-
-      // Activate diffuse mode
-      if (e.key === '+') {
-        this.set('mode', 'normal')
-        start()
-      }
-
-      // Deactivate
-      if (e.keyCode === 27) {
-        this.deactivateUI()
-
-        // User function
-        if (this.onExit) {
-          this.onExit()
-        }
-      }
-
-      // Start the high res capture by pressing any number
-      if (e.key.match(/^\d+$/)) {
-        if (!this.state.activeUI) {
-          console.warn(
-            'The high resolution tool is inactive. To activate press + (or - for depth rendering).'
-          )
-          return
-        }
-
-        // User function
-        if (this.onBeforeRender) {
-          this.onBeforeRender()
-        }
-
-        // Get factor
-        const factor = Math.min(parseInt(e.key), this.state.maxFactor)
-        this.set('factor', factor)
-
-        // Show loader
-        this.showLoader()
-
-        // Save start time
-        this.set('startTime', Date.now())
-
-        // Launch request (and restore renderer state when finished)
-        setTimeout(() => {
-          this.request(factor).then(filename => {
-            this.hideAllMessages()
-            this.set('endTime', Date.now())
-            let duration = this.get('endTime') - this.get('startTime')
-            duration = (duration / 1000).toFixed(2)
-
-            document.getElementById(
-              this.domId + '-filename'
-            ).innerHTML = filename
-            document.getElementById(
-              this.domId + '-duration'
-            ).innerHTML = `${duration} seconds`
-            document
-              .getElementById(this.domId + '-complete')
-              .classList.add('show')
-          })
-        }, 250) // <<== important - tell the browser to finish everything before launching the request
-      }
-    })
-  }
-
-  showLoader () {
-    let w = this.default.width * this.state.factor
-    let h = this.default.height * this.state.factor
-    w = w || this.state.originalWidth
-    h = h || this.state.originalHeight
-
-    this.hideAllMessages()
-    document.getElementById(this.domId + '-width').innerHTML = w
-    document.getElementById(this.domId + '-height').innerHTML = h
-    document.getElementById(this.domId + '-dpi').innerHTML =
-      Math.floor(w / 300) + ' x ' + Math.floor(h / 300)
-    document.getElementById(this.domId + '-loader').classList.add('show')
-  }
-
-  request (zoom) {
-    if (!this.state.busy) {
-      console.log('High res rendering started. Zoom factor:', zoom)
-
-      this.onResize(true)
-
-      return new window.Promise((resolve, reject) => {
-        let w, h, factor
-
-        if (zoom === 0) {
-          w = this.get('originalWidth')
-          h = this.get('originalHeight')
-          factor = 1
-        } else {
-          w = this.default.width
-          h = this.default.height
-          factor = zoom
-        }
-
-        this.set('width', w)
-        this.set('height', h)
-        this.set('factor', factor)
-        this.set('busy', true)
-
-        console.log(this.state)
-
-        // Wait
-        this.onRendered = filename => resolve(filename)
-        this.onError = () => reject()
-
-        // Start
-        this.render()
-      })
-    } else {
-      return Promise.resolve()
-    }
-  }
-
-  /**
-     * Creates a new SMAAPass and ensures that images are fully loaded.
-     *
-     * @param {Function} done - A callback. The new SMAAPass will be passed to this function.
-     */
-  createSMAAPass (done) {
-    this.smaaPass = new SMAAPass(window.Image)
-
-    const areaTexture = this.smaaPass.weightsMaterial.uniforms.tArea.value
-    const searchTexture = this.smaaPass.weightsMaterial.uniforms.tSearch.value
-
-    areaTexture.image.addEventListener('load', () => {
-      if (searchTexture.image.complete) {
-        // done(this.smaaPass)
-      }
-    })
-
-    searchTexture.image.addEventListener('load', () => {
-      if (areaTexture.image.complete) {
-        if (!searchTexture.image.complete) {
-          this.createSMAAPass(done)
-        } else {
-          done(this.smaaPass)
-        }
-      }
-    })
-
-    // Reload.
-    areaTexture.image.src = this.smaaPass.weightsMaterial.areaImage
-    searchTexture.image.src = this.smaaPass.weightsMaterial.searchImage
-  }
-
-  // Update the renderer with high res size and pixel ratio
-  setupHighresRenderer () {
-    this.camera.aspect = this.state.width / this.state.height
-    this.camera.updateProjectionMatrix()
-    this.renderer.setPixelRatio(this.state.factor)
-    this.renderer.setSize(this.state.width, this.state.height)
-  }
-
-  render () {
-    this.setupHighresRenderer()
-
-    const size = this.renderer.getDrawingBufferSize()
-    const arraySize = size.width * size.height * 4
-    const array = new Uint8Array(arraySize)
-
-    if (this.get('mode') === 'normal') {
-      this.renderNormal(array, size)
-    } else {
-      this.renderDepth(array, size)
-    }
-  }
-
-  renderNormal (array, size) {
-    // METHOD 1 - Normal render target + three.js renderer (fastest, no Anti-Aliasing)
-    // const anisotropy = this.renderer.capabilities.getMaxAnisotropy()
-    this.rt = new THREE.WebGLRenderTarget(size.width, size.height)
-    this.renderer.render(this.scene, this.camera, this.rt)
-    this.finishRender(array, size)
-
-    // METHOD 2 - Postprocessing with SMAA (best quality, slower)
-    // this.createSMAAPass(smaaPass => {
-    //   this.composer = new EffectComposer(this.renderer)
-    //   this.composer.addPass(new RenderPass(this.scene, this.camera))
-    //   // const pass = new SMAAPass(window.Image) // buggy: image must be loaded async
-    //   this.composer.addPass(smaaPass)
-    //   this.composer.render()
-    //   this.rt = this.composer.writeBuffer
-    //   this.finishRender(array, size)
-    // })
-  }
-
-  renderDepth (array, size) {
-    // High res render target
-    this.rt = new THREE.WebGLRenderTarget(size.width, size.height)
-
-    // Create a multi render target with Float buffers
-    const target = new THREE.WebGLRenderTarget(size.width, size.height)
-    target.texture.format = THREE.RGBFormat
-    target.texture.minFilter = THREE.NearestFilter
-    target.texture.magFilter = THREE.NearestFilter
-    target.texture.generateMipmaps = false
-    target.stencilBuffer = false
-    target.depthBuffer = true
-    target.depthTexture = new THREE.DepthTexture()
-    target.depthTexture.type = THREE.UnsignedShortType
-
-    // Setup post processing stage
-    const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-    const postMaterial = new THREE.ShaderMaterial({
-      vertexShader: `
-        varying vec2 vUv;
-              void main() {
-                  vUv = uv;
-                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }`,
-      fragmentShader: `
-        #include <packing>
-              varying vec2 vUv;
-              uniform sampler2D tDiffuse;
-              uniform sampler2D tDepth;
-              uniform float cameraNear;
-              uniform float cameraFar;
-              float readDepth (sampler2D depthSampler, vec2 coord) {
-                  float fragCoordZ = texture2D(depthSampler, coord).x;
-                  float viewZ = perspectiveDepthToViewZ( fragCoordZ, cameraNear, cameraFar );
-                  return viewZToOrthographicDepth( viewZ, cameraNear, cameraFar );
-              }
-              void main() {
-                  vec3 diffuse = texture2D(tDiffuse, vUv).rgb;
-                  float depth = readDepth(tDepth, vUv);
-                  gl_FragColor.rgb = vec3(depth);
-                  gl_FragColor.a = 1.0;
-              }`,
-      uniforms: {
-        cameraNear: { value: this.camera.near },
-        cameraFar: { value: this.camera.far },
-        tDiffuse: { value: target.texture },
-        tDepth: { value: target.depthTexture }
-      }
-    })
-    const postPlane = new THREE.PlaneBufferGeometry(2, 2)
-    const postQuad = new THREE.Mesh(postPlane, postMaterial)
-    const postScene = new THREE.Scene()
-    postScene.add(postQuad)
-
-    // Render
-    this.renderer.render(this.scene, this.camera, target)
-    this.renderer.render(postScene, postCamera, this.rt)
-
-    this.finishRender(array, size)
-  }
-
-  // Fill the array with data from the pixels
-  finishRender (array, size) {
-    this.renderer.readRenderTargetPixels(
-      this.rt,
-      0,
-      0,
-      size.width,
-      size.height,
-      array
-    )
-
-    const png = this.convertArrayToPNG(array, size)
-    this.downloadPNG(png)
-  }
-
-  // Convert buffer to PNG
-  convertArrayToPNG (array, size) {
-    const image = new PNG({
-      width: size.width,
-      height: size.height
-    })
-
-    let i, wi
-    for (let x = 0; x < size.width; x++) {
-      for (let y = 0; y < size.height; y++) {
-        // PNG indeces
-        i = (size.width * y + x) << 2
-
-        // Flip Y
-        // const flipY = size.height - y
-
-        // WebGL indeces
-        wi = (size.width * (size.height - y) + x) << 2
-
-        image.data[i] = array[wi] // r
-        image.data[i + 1] = array[wi + 1] // g
-        image.data[i + 2] = array[wi + 2] // b
-        image.data[i + 3] = array[wi + 3] // a
-      }
-    }
-
-    return image
-  }
-
-  // Try to write and download the PNG file
-  downloadPNG (image) {
-    try {
-      image.pack().pipe(fs.createWriteStream('newfile.png')).on('finish', e => {
-        fs.readFile('newfile.png', (error, data) => {
-          if (error) {
-            this.manageError(error)
-          } else {
-            const blob = new window.Blob([data], { type: 'image/png' })
-            const w = this.state.width * this.state.factor
-            const h = this.state.height * this.state.factor
-            const filename = `hr-${w}x${h}-${Date.now()}`
-            download(blob, filename, 'image/png')
-
-            this.restorePreviousState()
-            this.onRendered(`${filename}.png`)
-          }
-        })
-      })
-    } catch (error) {
-      this.manageError(error)
-    }
-  }
-
-  manageError (error) {
-    this.hideAllMessages()
-    document.getElementById(this.domId + '-error').classList.add('show')
-    this.onError(error)
-    this.restorePreviousState()
-  }
-
-  restorePreviousState () {
-    this.set('busy', false)
-    this.set('activeUI', false)
-    this.rt.dispose()
-    this.onResize()
-
-    // User function
-    if (this.onAfterRender) {
-      this.onAfterRender()
-    }
-
-    console.log('High res rendering complete.')
-  }
-
-  onResize (onlyUpdateState) {
-    if (this.state.busy) return
-
-    // const canvas = this.renderer.domElement
-    // const canvasSize = canvas.parentElement.getBoundingClientRect()
-    // const w = Math.floor(canvasSize.width)
-    // const h = Math.floor(canvasSize.height)
-
-    const w = window.innerWidth
-    const h = window.innerHeight
-    this.set('originalWidth', w)
-    this.set('originalHeight', h)
-    this.resizeCaptureArea()
-
-    if (!onlyUpdateState) {
-      this.camera.aspect = w / h
-      this.camera.updateProjectionMatrix()
-      this.renderer.setPixelRatio(window.devicePixelRatio || 1)
-      this.renderer.setSize(w, h, true)
-    }
-  }
-
-  resizeCaptureArea () {
-    const captureArea = document.getElementById(this.domId + '-capture-area')
-    const h = this.get('originalHeight')
-    const ratio = this.default.width / this.default.height
-
-    const cW = h * ratio
-    const cH = h
-
-    captureArea.style.width = cW + 'px'
-    captureArea.style.height = cH + 'px'
-  }
-
-  initDom () {
-    this.domId = 'high-res'
-    const get = id => document.getElementById(id)
-    const msgClass = this.domId + '-msg-box'
-    this.dom('div', this.domId, document.body)
-    this.dom('div', this.domId + '-capture-area', get(this.domId))
-    this.dom('div', this.domId + '-modal-wrapper', get(this.domId))
-    this.dom('div', this.domId + '-modal', get(this.domId + '-modal-wrapper'))
-
-    // Messages containers
-    this.dom(
-      'div',
-      this.domId + '-message',
-      get(this.domId + '-modal'),
-      `show ${msgClass}`
-    )
-    this.dom(
-      'div',
-      this.domId + '-loader',
-      get(this.domId + '-modal'),
-      msgClass
-    )
-    this.dom(
-      'div',
-      this.domId + '-complete',
-      get(this.domId + '-modal'),
-      msgClass
-    )
-    this.dom(
-      'div',
-      this.domId + '-error',
-      get(this.domId + '-modal'),
-      msgClass
-    )
-
-    // Info message
-    const w = this.default.width
-    const h = this.default.height
-    const factor = 2 + Math.round(Math.random() * (this.state.maxFactor - 2))
-    const hrW = w * factor
-    const hrH = h * factor
-    const inchW = Math.floor(hrW / 300)
-    const inchH = Math.floor(hrH / 300)
-    const maxTextureSize = this.state.maxTextureSize
-    const maxFactor = this.state.maxFactor
-    const maxInches = Math.floor(maxTextureSize / 300)
-
-    this.html(
-      `<div class="title mode" id="${this
-        .domId}-normal-mode-title">High resolution rendering</div>
-          
-          <div class="title mode" id="${this
-            .domId}-depth-mode-title">Depth rendering</div>
-        <br><br>
-        WARNING: <i>This can take time. The browser tab will be busy for a few seconds (or more).</i>
-        <ul>
-          <li>
-              To start rendering press a number from <strong>0 to ${maxFactor}</strong>.  
-              This value will be used as a factor of ${w} x ${h} and the result will be the size of the final PNG image (0 will result in a screenshot of the scene at your current resolution).
-          </li>
-          <li>
-              Your GPU supports ${maxTextureSize} x ${maxTextureSize} textures (${maxInches} x ${maxInches} inches at 300 dpi), so the maximum factor you can use is <strong>${maxFactor}</strong>.
-          </li>
-          <li>
-              The rectangle shows the area that will be captured (it can be larger than the viewport).
-          </li>
-        </ul>
-        
-        <strong>Example:</strong>
-        <br>
-        If you select <strong>${factor}</strong> you will get a ${factor}*${w} x ${factor}*${h} image = <strong>${hrW} x ${hrH}</strong>.
-        <br>
-        That is a nice <strong>${inchW} x ${inchH} inches</strong> print at <strong>300 dpi</strong>.
-        <br><br>
-        Press ESC to exit.
-        `,
-      this.domId + '-message'
-    )
-
-    // Loader message
-    this.html(
-      `<div class="title">Rendering</div>
-      <br><br>
-      Sit back and relax. A beautiful <span id="${this
-        .domId}-width"></span> x <span id="${this.domId}-height"></span> 
-      image (<span id="${this
-        .domId}-dpi"></span> inches at 300 dpi) is on the way<span id="loader-dots">...</span>
-      <br><br>
-      The scene may resize and look distorted for a few seconds.
-      `,
-      this.domId + '-loader'
-    )
-
-    // Done message
-    this.html(
-      `<div class="title">Rendering completed</div>
-      <br><br>
-      It took <strong id="${this.domId}-duration"></strong>. 
-      The file <strong id="${this.domId}-filename"></strong> is ready.
-      <br><br>
-      Press ESC to exit. Or + to start again.
-      `,
-      this.domId + '-complete'
-    )
-
-    // Error message
-    this.html(
-      `<div class="title">Erm...</div>
-      <br><br>
-      There was an error.
-      <br><br>
-      Press ESC to exit or reload the page.
-      `,
-      this.domId + '-error'
-    )
-  }
-
-  dom (elType, id, parent, className) {
-    const el = document.createElement(elType)
-    el.setAttribute('id', id || '')
-    el.className = className || ''
-    parent.appendChild(el)
-  }
-
-  html (code, id) {
-    document.getElementById(id).innerHTML = code
-  }
-
-  hideAllMessages () {
-    const msg = document.getElementsByClassName(this.domId + '-msg-box')
-
-    for (let i = 0; i < msg.length; i++) {
-      msg[i].classList.remove('show')
-    }
-  }
-
-  initStyles () {
-    const css = `#${this.domId} {
-        position: fixed;
-        z-index: 1000;
-        width: 100%;
-        height: 100%;
-        top: 0;
-        left: 0;
-        display: none;
-      }
-  
-      #${this.domId}.show {
-        display: block;
-      }
-      
-      #${this.domId}-modal-wrapper {
-        position: absolute;
-        width: 37.5%;
-        min-width: 400px;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-      }
-  
-      #${this.domId}-modal {
-        position: relative;
-        width: 100%;
-        background-color: #FFF;
-        box-shadow: 0px 0px 30px 0px rgba(0,0,0,0.2);
-        padding: 20px;
-        color: #333;
-        font-size: 12px;
-        border-radius: 5px;
-        box-sizing: border-box;
-      }
-  
-      #${this.domId}-message {
-        
-      }
-  
-      .${this.domId}-msg-box {
-        display: none;
-      }
-      .${this.domId}-msg-box.show {
-        display: block;
-      }
-  
-      .title {
-        font-size: 14px;
-        font-weight: bold;
-      }
-  
-      .mode {
-        display: none;
-      }
-  
-      .mode.show {
-        display: block;
-      }
-  
-      #${this.domId}-loader {
-        
-      }
-  
-      #${this.domId}-complete {
-      }
-  
-      #${this.domId}-capture-area {
-        position: absolute;
-        box-sizing: content-box;
-        border: 1px solid #FFF;
-        // box-shadow:inset 0 0 20px 0 rgba(0,0,0,0.3);
-        box-shadow: 0 0 40px 0 rgba(0,0,0,0.5);
-        background-color: transparent;
-        left: 50%;
-        top: 50%;
-        transform: translateX(-50%) translateY(-50%);
-      }
-      `
-
-    this.appendStyle(css)
-  }
-
-  appendStyle (css) {
-    const head =
-      window.document.head || window.document.getElementsByTagName('head')[0]
-    const style = window.document.createElement('style')
-
-    style.type = 'text/css'
-    if (style.styleSheet) {
-      style.styleSheet.cssText = css
-    } else {
-      style.appendChild(document.createTextNode(css))
-    }
-
-    head.appendChild(style)
-  }
-}
-
-module.exports = Highres
-
-},{"browserify-fs":18,"downloadjs":33,"pngjs":142}],2:[function(require,module,exports){
 (function (process){
 /* Copyright (c) 2013 Rod Vagg, MIT License */
 
@@ -820,7 +82,7 @@ AbstractChainedBatch.prototype.write = function (options, callback) {
 
 module.exports = AbstractChainedBatch
 }).call(this,require('_process'))
-},{"_process":146}],3:[function(require,module,exports){
+},{"_process":145}],2:[function(require,module,exports){
 (function (process){
 /* Copyright (c) 2013 Rod Vagg, MIT License */
 
@@ -873,7 +135,7 @@ AbstractIterator.prototype.end = function (callback) {
 module.exports = AbstractIterator
 
 }).call(this,require('_process'))
-},{"_process":146}],4:[function(require,module,exports){
+},{"_process":145}],3:[function(require,module,exports){
 (function (Buffer,process){
 /* Copyright (c) 2013 Rod Vagg, MIT License */
 
@@ -1133,7 +395,7 @@ module.exports.AbstractIterator     = AbstractIterator
 module.exports.AbstractChainedBatch = AbstractChainedBatch
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")},require('_process'))
-},{"../is-buffer/index.js":52,"./abstract-chained-batch":2,"./abstract-iterator":3,"_process":146,"xtend":5}],5:[function(require,module,exports){
+},{"../is-buffer/index.js":51,"./abstract-chained-batch":1,"./abstract-iterator":2,"_process":145,"xtend":4}],4:[function(require,module,exports){
 module.exports = extend
 
 function extend() {
@@ -1152,7 +414,7 @@ function extend() {
     return target
 }
 
-},{}],6:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 (function (global){
 'use strict';
 
@@ -1646,7 +908,7 @@ var objectKeys = Object.keys || function (obj) {
 };
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"util/":170}],7:[function(require,module,exports){
+},{"util/":169}],6:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -1762,7 +1024,7 @@ function fromByteArray (uint8) {
   return parts.join('')
 }
 
-},{}],8:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 (function (Buffer){
 var DuplexStream = require('readable-stream').Duplex
   , util         = require('util')
@@ -1979,12 +1241,12 @@ BufferList.prototype.destroy = function () {
 module.exports = BufferList
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":21,"readable-stream":15,"util":170}],9:[function(require,module,exports){
+},{"buffer":20,"readable-stream":14,"util":169}],8:[function(require,module,exports){
 module.exports = Array.isArray || function (arr) {
   return Object.prototype.toString.call(arr) == '[object Array]';
 };
 
-},{}],10:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -2077,7 +1339,7 @@ function forEach (xs, f) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_readable":12,"./_stream_writable":14,"_process":146,"core-util-is":31,"inherits":51}],11:[function(require,module,exports){
+},{"./_stream_readable":11,"./_stream_writable":13,"_process":145,"core-util-is":30,"inherits":50}],10:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2125,7 +1387,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":13,"core-util-is":31,"inherits":51}],12:[function(require,module,exports){
+},{"./_stream_transform":12,"core-util-is":30,"inherits":50}],11:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -3111,7 +2373,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require('_process'))
-},{"_process":146,"buffer":21,"core-util-is":31,"events":36,"inherits":51,"isarray":9,"stream":162,"string_decoder/":16}],13:[function(require,module,exports){
+},{"_process":145,"buffer":20,"core-util-is":30,"events":35,"inherits":50,"isarray":8,"stream":161,"string_decoder/":15}],12:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3323,7 +2585,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":10,"core-util-is":31,"inherits":51}],14:[function(require,module,exports){
+},{"./_stream_duplex":9,"core-util-is":30,"inherits":50}],13:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -3713,7 +2975,7 @@ function endWritable(stream, state, cb) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":10,"_process":146,"buffer":21,"core-util-is":31,"inherits":51,"stream":162}],15:[function(require,module,exports){
+},{"./_stream_duplex":9,"_process":145,"buffer":20,"core-util-is":30,"inherits":50,"stream":161}],14:[function(require,module,exports){
 (function (process){
 var Stream = require('stream'); // hack to fix a circular dependency issue when used with browserify
 exports = module.exports = require('./lib/_stream_readable.js');
@@ -3728,7 +2990,7 @@ if (!process.browser && process.env.READABLE_STREAM === 'disable') {
 }
 
 }).call(this,require('_process'))
-},{"./lib/_stream_duplex.js":10,"./lib/_stream_passthrough.js":11,"./lib/_stream_readable.js":12,"./lib/_stream_transform.js":13,"./lib/_stream_writable.js":14,"_process":146,"stream":162}],16:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":9,"./lib/_stream_passthrough.js":10,"./lib/_stream_readable.js":11,"./lib/_stream_transform.js":12,"./lib/_stream_writable.js":13,"_process":145,"stream":161}],15:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3951,16 +3213,16 @@ function base64DetectIncompleteChar(buffer) {
   this.charLength = this.charReceived ? 3 : 0;
 }
 
-},{"buffer":21}],17:[function(require,module,exports){
+},{"buffer":20}],16:[function(require,module,exports){
 
-},{}],18:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 var leveljs = require('level-js');
 var levelup = require('levelup');
 var fs = require('level-filesystem');
 
 var db = levelup('level-filesystem', {db:leveljs});
 module.exports = fs(db);
-},{"level-filesystem":67,"level-js":75,"levelup":92}],19:[function(require,module,exports){
+},{"level-filesystem":66,"level-js":74,"levelup":91}],18:[function(require,module,exports){
 (function (process,Buffer){
 var msg = require('pako/lib/zlib/messages');
 var zstream = require('pako/lib/zlib/zstream');
@@ -4200,7 +3462,7 @@ Zlib.prototype._error = function(status) {
 exports.Zlib = Zlib;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":146,"buffer":21,"pako/lib/zlib/constants":113,"pako/lib/zlib/deflate.js":115,"pako/lib/zlib/inflate.js":117,"pako/lib/zlib/messages":119,"pako/lib/zlib/zstream":121}],20:[function(require,module,exports){
+},{"_process":145,"buffer":20,"pako/lib/zlib/constants":112,"pako/lib/zlib/deflate.js":114,"pako/lib/zlib/inflate.js":116,"pako/lib/zlib/messages":118,"pako/lib/zlib/zstream":120}],19:[function(require,module,exports){
 (function (process,Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -4814,7 +4076,7 @@ util.inherits(InflateRaw, Zlib);
 util.inherits(Unzip, Zlib);
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./binding":19,"_process":146,"_stream_transform":159,"assert":6,"buffer":21,"util":170}],21:[function(require,module,exports){
+},{"./binding":18,"_process":145,"_stream_transform":158,"assert":5,"buffer":20,"util":169}],20:[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -6530,7 +5792,7 @@ function numberIsNaN (obj) {
   return obj !== obj // eslint-disable-line no-self-compare
 }
 
-},{"base64-js":7,"ieee754":50}],22:[function(require,module,exports){
+},{"base64-js":6,"ieee754":49}],21:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -6678,7 +5940,7 @@ clone.clonePrototype = function(parent) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":21}],23:[function(require,module,exports){
+},{"buffer":20}],22:[function(require,module,exports){
 (function (Buffer){
 var Writable = require('readable-stream').Writable
 var inherits = require('inherits')
@@ -6825,7 +6087,7 @@ function u8Concat (parts) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":21,"inherits":51,"readable-stream":29,"typedarray":166}],24:[function(require,module,exports){
+},{"buffer":20,"inherits":50,"readable-stream":28,"typedarray":165}],23:[function(require,module,exports){
 // a duplex stream is just a stream that is both readable and writable.
 // Since JS doesn't have multiple prototypal inheritance, this class
 // prototypally inherits from Readable, and then parasitically from
@@ -6901,7 +6163,7 @@ function forEach(xs, f) {
     f(xs[i], i);
   }
 }
-},{"./_stream_readable":26,"./_stream_writable":28,"core-util-is":31,"inherits":51,"process-nextick-args":145}],25:[function(require,module,exports){
+},{"./_stream_readable":25,"./_stream_writable":27,"core-util-is":30,"inherits":50,"process-nextick-args":144}],24:[function(require,module,exports){
 // a passthrough stream.
 // basically just the most minimal sort of Transform stream.
 // Every written chunk gets output as-is.
@@ -6928,7 +6190,7 @@ function PassThrough(options) {
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
-},{"./_stream_transform":27,"core-util-is":31,"inherits":51}],26:[function(require,module,exports){
+},{"./_stream_transform":26,"core-util-is":30,"inherits":50}],25:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -7811,7 +7073,7 @@ function indexOf(xs, x) {
   return -1;
 }
 }).call(this,require('_process'))
-},{"./_stream_duplex":24,"_process":146,"buffer":21,"core-util-is":31,"events":36,"inherits":51,"isarray":54,"process-nextick-args":145,"string_decoder/":30,"util":17}],27:[function(require,module,exports){
+},{"./_stream_duplex":23,"_process":145,"buffer":20,"core-util-is":30,"events":35,"inherits":50,"isarray":53,"process-nextick-args":144,"string_decoder/":29,"util":16}],26:[function(require,module,exports){
 // a transform stream is a readable/writable stream where you do
 // something with the data.  Sometimes it's called a "filter",
 // but that's not a great name for it, since that implies a thing where
@@ -7992,7 +7254,7 @@ function done(stream, er) {
 
   return stream.push(null);
 }
-},{"./_stream_duplex":24,"core-util-is":31,"inherits":51}],28:[function(require,module,exports){
+},{"./_stream_duplex":23,"core-util-is":30,"inherits":50}],27:[function(require,module,exports){
 (function (process){
 // A bit simpler than readable streams.
 // Implement an async ._write(chunk, encoding, cb), and it'll handle all
@@ -8511,7 +7773,7 @@ function CorkedRequest(state) {
   };
 }
 }).call(this,require('_process'))
-},{"./_stream_duplex":24,"_process":146,"buffer":21,"core-util-is":31,"events":36,"inherits":51,"process-nextick-args":145,"util-deprecate":167}],29:[function(require,module,exports){
+},{"./_stream_duplex":23,"_process":145,"buffer":20,"core-util-is":30,"events":35,"inherits":50,"process-nextick-args":144,"util-deprecate":166}],28:[function(require,module,exports){
 var Stream = (function (){
   try {
     return require('st' + 'ream'); // hack to fix a circular dependency issue when used with browserify
@@ -8525,9 +7787,9 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":24,"./lib/_stream_passthrough.js":25,"./lib/_stream_readable.js":26,"./lib/_stream_transform.js":27,"./lib/_stream_writable.js":28}],30:[function(require,module,exports){
-arguments[4][16][0].apply(exports,arguments)
-},{"buffer":21,"dup":16}],31:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":23,"./lib/_stream_passthrough.js":24,"./lib/_stream_readable.js":25,"./lib/_stream_transform.js":26,"./lib/_stream_writable.js":27}],29:[function(require,module,exports){
+arguments[4][15][0].apply(exports,arguments)
+},{"buffer":20,"dup":15}],30:[function(require,module,exports){
 (function (Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -8638,7 +7900,7 @@ function objectToString(o) {
 }
 
 }).call(this,{"isBuffer":require("../../is-buffer/index.js")})
-},{"../../is-buffer/index.js":52}],32:[function(require,module,exports){
+},{"../../is-buffer/index.js":51}],31:[function(require,module,exports){
 (function (Buffer,process){
 var util              = require('util')
   , AbstractLevelDOWN = require('abstract-leveldown').AbstractLevelDOWN
@@ -8689,7 +7951,7 @@ DeferredLevelDOWN.prototype._iterator = function () {
 module.exports = DeferredLevelDOWN
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")},require('_process'))
-},{"../is-buffer/index.js":52,"_process":146,"abstract-leveldown":4,"util":170}],33:[function(require,module,exports){
+},{"../is-buffer/index.js":51,"_process":145,"abstract-leveldown":3,"util":169}],32:[function(require,module,exports){
 //download.js v4.2, by dandavis; 2008-2016. [MIT] see http://danml.com/download.html for tests/usage
 // v1 landed a FF+Chrome compat way of downloading strings to local un-named files, upgraded to use a hidden frame and optional mime
 // v2 added named files via a[download], msSaveBlob, IE (10+) support, and window.URL support for larger+faster saves than dataURLs
@@ -8858,7 +8120,7 @@ module.exports = DeferredLevelDOWN
 	}; /* end download() */
 }));
 
-},{}],34:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 var prr = require('prr')
 
 function init (type, message, cause) {
@@ -8915,7 +8177,7 @@ module.exports = function (errno) {
   }
 }
 
-},{"prr":147}],35:[function(require,module,exports){
+},{"prr":146}],34:[function(require,module,exports){
 var all = module.exports.all = [
   {
     errno: -2,
@@ -9230,7 +8492,7 @@ all.forEach(function (error) {
 module.exports.custom = require('./custom')(module.exports)
 module.exports.create = module.exports.custom.createError
 
-},{"./custom":34}],36:[function(require,module,exports){
+},{"./custom":33}],35:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9534,7 +8796,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],37:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 
 var hasOwn = Object.prototype.hasOwnProperty;
 var toString = Object.prototype.toString;
@@ -9558,7 +8820,7 @@ module.exports = function forEach (obj, fn, ctx) {
 };
 
 
-},{}],38:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 (function (process,Buffer){
 var Writable = require('readable-stream/writable');
 var Readable = require('readable-stream/readable');
@@ -9720,29 +8982,29 @@ exports.duplex = function(opts, initWritable, initReadable) {
 	return dupl;
 };
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":146,"buffer":21,"readable-stream/duplex":40,"readable-stream/readable":46,"readable-stream/writable":47}],39:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],40:[function(require,module,exports){
+},{"_process":145,"buffer":20,"readable-stream/duplex":39,"readable-stream/readable":45,"readable-stream/writable":46}],38:[function(require,module,exports){
+arguments[4][8][0].apply(exports,arguments)
+},{"dup":8}],39:[function(require,module,exports){
 module.exports = require("./lib/_stream_duplex.js")
 
-},{"./lib/_stream_duplex.js":41}],41:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":40}],40:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"./_stream_readable":42,"./_stream_writable":44,"_process":145,"core-util-is":30,"dup":9,"inherits":50}],41:[function(require,module,exports){
 arguments[4][10][0].apply(exports,arguments)
-},{"./_stream_readable":43,"./_stream_writable":45,"_process":146,"core-util-is":31,"dup":10,"inherits":51}],42:[function(require,module,exports){
+},{"./_stream_transform":43,"core-util-is":30,"dup":10,"inherits":50}],42:[function(require,module,exports){
 arguments[4][11][0].apply(exports,arguments)
-},{"./_stream_transform":44,"core-util-is":31,"dup":11,"inherits":51}],43:[function(require,module,exports){
+},{"_process":145,"buffer":20,"core-util-is":30,"dup":11,"events":35,"inherits":50,"isarray":38,"stream":161,"string_decoder/":47}],43:[function(require,module,exports){
 arguments[4][12][0].apply(exports,arguments)
-},{"_process":146,"buffer":21,"core-util-is":31,"dup":12,"events":36,"inherits":51,"isarray":39,"stream":162,"string_decoder/":48}],44:[function(require,module,exports){
+},{"./_stream_duplex":40,"core-util-is":30,"dup":12,"inherits":50}],44:[function(require,module,exports){
 arguments[4][13][0].apply(exports,arguments)
-},{"./_stream_duplex":41,"core-util-is":31,"dup":13,"inherits":51}],45:[function(require,module,exports){
+},{"./_stream_duplex":40,"_process":145,"buffer":20,"core-util-is":30,"dup":13,"inherits":50,"stream":161}],45:[function(require,module,exports){
 arguments[4][14][0].apply(exports,arguments)
-},{"./_stream_duplex":41,"_process":146,"buffer":21,"core-util-is":31,"dup":14,"inherits":51,"stream":162}],46:[function(require,module,exports){
-arguments[4][15][0].apply(exports,arguments)
-},{"./lib/_stream_duplex.js":41,"./lib/_stream_passthrough.js":42,"./lib/_stream_readable.js":43,"./lib/_stream_transform.js":44,"./lib/_stream_writable.js":45,"_process":146,"dup":15,"stream":162}],47:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":40,"./lib/_stream_passthrough.js":41,"./lib/_stream_readable.js":42,"./lib/_stream_transform.js":43,"./lib/_stream_writable.js":44,"_process":145,"dup":14,"stream":161}],46:[function(require,module,exports){
 module.exports = require("./lib/_stream_writable.js")
 
-},{"./lib/_stream_writable.js":45}],48:[function(require,module,exports){
-arguments[4][16][0].apply(exports,arguments)
-},{"buffer":21,"dup":16}],49:[function(require,module,exports){
+},{"./lib/_stream_writable.js":44}],47:[function(require,module,exports){
+arguments[4][15][0].apply(exports,arguments)
+},{"buffer":20,"dup":15}],48:[function(require,module,exports){
 /*global window:false, self:false, define:false, module:false */
 
 /**
@@ -11149,7 +10411,7 @@ arguments[4][16][0].apply(exports,arguments)
 
 }, this);
 
-},{}],50:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = nBytes * 8 - mLen - 1
@@ -11235,7 +10497,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],51:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -11260,7 +10522,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],52:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 /*!
  * Determine if an object is a Buffer
  *
@@ -11283,7 +10545,7 @@ function isSlowBuffer (obj) {
   return typeof obj.readFloatLE === 'function' && typeof obj.slice === 'function' && isBuffer(obj.slice(0, 0))
 }
 
-},{}],53:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 
 /**!
  * is
@@ -11987,14 +11249,14 @@ is.string = function (value) {
 };
 
 
-},{}],54:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 var toString = {}.toString;
 
 module.exports = Array.isArray || function (arr) {
   return toString.call(arr) == '[object Array]';
 };
 
-},{}],55:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 var Buffer = require('buffer').Buffer;
 
 module.exports = isBuffer;
@@ -12004,7 +11266,7 @@ function isBuffer (o) {
     || /\[object (.+Array|Array.+)\]/.test(Object.prototype.toString.call(o));
 }
 
-},{"buffer":21}],56:[function(require,module,exports){
+},{"buffer":20}],55:[function(require,module,exports){
 (function (process,Buffer){
 var Writable = require('readable-stream/writable');
 var Readable = require('readable-stream/readable');
@@ -12399,13 +11661,13 @@ module.exports = function(db, opts) {
 	return blobs;
 };
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":146,"buffer":21,"level-peek":83,"once":110,"readable-stream/readable":63,"readable-stream/writable":64,"util":170}],57:[function(require,module,exports){
+},{"_process":145,"buffer":20,"level-peek":82,"once":109,"readable-stream/readable":62,"readable-stream/writable":63,"util":169}],56:[function(require,module,exports){
+arguments[4][8][0].apply(exports,arguments)
+},{"dup":8}],57:[function(require,module,exports){
 arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],58:[function(require,module,exports){
+},{"./_stream_readable":59,"./_stream_writable":61,"_process":145,"core-util-is":30,"dup":9,"inherits":50}],58:[function(require,module,exports){
 arguments[4][10][0].apply(exports,arguments)
-},{"./_stream_readable":60,"./_stream_writable":62,"_process":146,"core-util-is":31,"dup":10,"inherits":51}],59:[function(require,module,exports){
-arguments[4][11][0].apply(exports,arguments)
-},{"./_stream_transform":61,"core-util-is":31,"dup":11,"inherits":51}],60:[function(require,module,exports){
+},{"./_stream_transform":60,"core-util-is":30,"dup":10,"inherits":50}],59:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -13360,7 +12622,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":58,"_process":146,"buffer":21,"core-util-is":31,"events":36,"inherits":51,"isarray":57,"stream":162,"string_decoder/":65,"util":17}],61:[function(require,module,exports){
+},{"./_stream_duplex":57,"_process":145,"buffer":20,"core-util-is":30,"events":35,"inherits":50,"isarray":56,"stream":161,"string_decoder/":64,"util":16}],60:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -13571,7 +12833,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":58,"core-util-is":31,"inherits":51}],62:[function(require,module,exports){
+},{"./_stream_duplex":57,"core-util-is":30,"inherits":50}],61:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -14052,7 +13314,7 @@ function endWritable(stream, state, cb) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":58,"_process":146,"buffer":21,"core-util-is":31,"inherits":51,"stream":162}],63:[function(require,module,exports){
+},{"./_stream_duplex":57,"_process":145,"buffer":20,"core-util-is":30,"inherits":50,"stream":161}],62:[function(require,module,exports){
 (function (process){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = require('stream');
@@ -14066,11 +13328,11 @@ if (!process.browser && process.env.READABLE_STREAM === 'disable') {
 }
 
 }).call(this,require('_process'))
-},{"./lib/_stream_duplex.js":58,"./lib/_stream_passthrough.js":59,"./lib/_stream_readable.js":60,"./lib/_stream_transform.js":61,"./lib/_stream_writable.js":62,"_process":146,"stream":162}],64:[function(require,module,exports){
-arguments[4][47][0].apply(exports,arguments)
-},{"./lib/_stream_writable.js":62,"dup":47}],65:[function(require,module,exports){
-arguments[4][16][0].apply(exports,arguments)
-},{"buffer":21,"dup":16}],66:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":57,"./lib/_stream_passthrough.js":58,"./lib/_stream_readable.js":59,"./lib/_stream_transform.js":60,"./lib/_stream_writable.js":61,"_process":145,"stream":161}],63:[function(require,module,exports){
+arguments[4][46][0].apply(exports,arguments)
+},{"./lib/_stream_writable.js":61,"dup":46}],64:[function(require,module,exports){
+arguments[4][15][0].apply(exports,arguments)
+},{"buffer":20,"dup":15}],65:[function(require,module,exports){
 var errno = require('errno');
 
 Object.keys(errno.code).forEach(function(code) {
@@ -14084,7 +13346,7 @@ Object.keys(errno.code).forEach(function(code) {
 		return err;
 	};
 });
-},{"errno":35}],67:[function(require,module,exports){
+},{"errno":34}],66:[function(require,module,exports){
 (function (process,Buffer){
 var fwd = require('fwd-stream');
 var sublevel = require('level-sublevel');
@@ -14685,7 +13947,7 @@ module.exports = function(db, opts) {
 };
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./errno":66,"./paths":70,"./watchers":72,"_process":146,"buffer":21,"fwd-stream":38,"level-blobs":56,"level-peek":83,"level-sublevel":85,"octal":109,"once":110}],68:[function(require,module,exports){
+},{"./errno":65,"./paths":69,"./watchers":71,"_process":145,"buffer":20,"fwd-stream":37,"level-blobs":55,"level-peek":82,"level-sublevel":84,"octal":108,"once":109}],67:[function(require,module,exports){
 module.exports = hasKeys
 
 function hasKeys(source) {
@@ -14694,7 +13956,7 @@ function hasKeys(source) {
         typeof source === "function")
 }
 
-},{}],69:[function(require,module,exports){
+},{}],68:[function(require,module,exports){
 var hasKeys = require("./has-keys")
 
 module.exports = extend
@@ -14719,7 +13981,7 @@ function extend() {
     return target
 }
 
-},{"./has-keys":68}],70:[function(require,module,exports){
+},{"./has-keys":67}],69:[function(require,module,exports){
 (function (process){
 var path = require('path');
 var once = require('once');
@@ -14839,7 +14101,7 @@ module.exports = function(db) {
 };
 
 }).call(this,require('_process'))
-},{"./errno":66,"./stat":71,"_process":146,"concat-stream":23,"octal":109,"once":110,"path":122,"xtend":69}],71:[function(require,module,exports){
+},{"./errno":65,"./stat":70,"_process":145,"concat-stream":22,"octal":108,"once":109,"path":121,"xtend":68}],70:[function(require,module,exports){
 var toDate = function(date) {
 	if (!date) return new Date();
 	if (typeof date === 'string') return new Date(date);
@@ -14891,7 +14153,7 @@ Stat.prototype.isSocket = function() {
 module.exports = function(opts) {
 	return new Stat(opts);
 };
-},{}],72:[function(require,module,exports){
+},{}],71:[function(require,module,exports){
 var events = require('events');
 
 module.exports = function() {
@@ -14944,7 +14206,7 @@ module.exports = function() {
 
 	return that;
 };
-},{"events":36}],73:[function(require,module,exports){
+},{"events":35}],72:[function(require,module,exports){
 
 module.exports = 
 function fixRange(opts) {
@@ -14964,7 +14226,7 @@ function fixRange(opts) {
 }
 
 
-},{}],74:[function(require,module,exports){
+},{}],73:[function(require,module,exports){
 var ranges = require('string-range')
 
 module.exports = function (db) {
@@ -15134,7 +14396,7 @@ module.exports = function (db) {
   }
 }
 
-},{"string-range":163}],75:[function(require,module,exports){
+},{"string-range":162}],74:[function(require,module,exports){
 (function (Buffer){
 module.exports = Level
 
@@ -15312,7 +14574,7 @@ var checkKeyValue = Level.prototype._checkKeyValue = function (obj, type) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./iterator":76,"abstract-leveldown":4,"buffer":21,"idb-wrapper":49,"isbuffer":55,"typedarray-to-buffer":165,"util":170,"xtend":82}],76:[function(require,module,exports){
+},{"./iterator":75,"abstract-leveldown":3,"buffer":20,"idb-wrapper":48,"isbuffer":54,"typedarray-to-buffer":164,"util":169,"xtend":81}],75:[function(require,module,exports){
 var util = require('util')
 var AbstractIterator  = require('abstract-leveldown').AbstractIterator
 var ltgt = require('ltgt')
@@ -15386,7 +14648,7 @@ Iterator.prototype._next = function (callback) {
   this.callback = callback
 }
 
-},{"abstract-leveldown":4,"ltgt":106,"util":170}],77:[function(require,module,exports){
+},{"abstract-leveldown":3,"ltgt":105,"util":169}],76:[function(require,module,exports){
 var hasOwn = Object.prototype.hasOwnProperty;
 var toString = Object.prototype.toString;
 
@@ -15428,11 +14690,11 @@ module.exports = function forEach(obj, fn) {
 };
 
 
-},{}],78:[function(require,module,exports){
+},{}],77:[function(require,module,exports){
 module.exports = Object.keys || require('./shim');
 
 
-},{"./shim":80}],79:[function(require,module,exports){
+},{"./shim":79}],78:[function(require,module,exports){
 var toString = Object.prototype.toString;
 
 module.exports = function isArguments(value) {
@@ -15450,7 +14712,7 @@ module.exports = function isArguments(value) {
 };
 
 
-},{}],80:[function(require,module,exports){
+},{}],79:[function(require,module,exports){
 (function () {
 	"use strict";
 
@@ -15514,9 +14776,9 @@ module.exports = function isArguments(value) {
 }());
 
 
-},{"./foreach":77,"./isArguments":79}],81:[function(require,module,exports){
-arguments[4][68][0].apply(exports,arguments)
-},{"dup":68}],82:[function(require,module,exports){
+},{"./foreach":76,"./isArguments":78}],80:[function(require,module,exports){
+arguments[4][67][0].apply(exports,arguments)
+},{"dup":67}],81:[function(require,module,exports){
 var Keys = require("object-keys")
 var hasKeys = require("./has-keys")
 
@@ -15543,7 +14805,7 @@ function extend() {
     return target
 }
 
-},{"./has-keys":81,"object-keys":78}],83:[function(require,module,exports){
+},{"./has-keys":80,"object-keys":77}],82:[function(require,module,exports){
 var fixRange = require('level-fix-range')
 //get the first/last record in a range
 
@@ -15620,7 +14882,7 @@ function last (db, opts, cb) {
 }
 
 
-},{"level-fix-range":73}],84:[function(require,module,exports){
+},{"level-fix-range":72}],83:[function(require,module,exports){
 function addOperation (type, key, value, options) {
   var operation = {
     type: type,
@@ -15660,7 +14922,7 @@ B.write = function (cb) {
 
 module.exports = Batch
 
-},{}],85:[function(require,module,exports){
+},{}],84:[function(require,module,exports){
 (function (process){
 var EventEmitter = require('events').EventEmitter
 var next         = process.nextTick
@@ -15754,7 +15016,7 @@ module.exports   = function (_db, options) {
 
 
 }).call(this,require('_process'))
-},{"./batch":84,"./sub":89,"_process":146,"events":36,"level-fix-range":86,"level-hooks":74}],86:[function(require,module,exports){
+},{"./batch":83,"./sub":88,"_process":145,"events":35,"level-fix-range":85,"level-hooks":73}],85:[function(require,module,exports){
 var clone = require('clone')
 
 module.exports = 
@@ -15780,11 +15042,11 @@ function fixRange(opts) {
   return opts
 }
 
-},{"clone":22}],87:[function(require,module,exports){
-arguments[4][68][0].apply(exports,arguments)
-},{"dup":68}],88:[function(require,module,exports){
-arguments[4][82][0].apply(exports,arguments)
-},{"./has-keys":87,"dup":82,"object-keys":107}],89:[function(require,module,exports){
+},{"clone":21}],86:[function(require,module,exports){
+arguments[4][67][0].apply(exports,arguments)
+},{"dup":67}],87:[function(require,module,exports){
+arguments[4][81][0].apply(exports,arguments)
+},{"./has-keys":86,"dup":81,"object-keys":106}],88:[function(require,module,exports){
 var EventEmitter = require('events').EventEmitter
 var inherits     = require('util').inherits
 var ranges       = require('string-range')
@@ -16063,7 +15325,7 @@ SDB.post = function (range, hook) {
 var exports = module.exports = SubDB
 
 
-},{"./batch":84,"events":36,"level-fix-range":86,"string-range":163,"util":170,"xtend":88}],90:[function(require,module,exports){
+},{"./batch":83,"events":35,"level-fix-range":85,"string-range":162,"util":169,"xtend":87}],89:[function(require,module,exports){
 /* Copyright (c) 2012-2014 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT License
@@ -16143,7 +15405,7 @@ Batch.prototype.write = function (callback) {
 
 module.exports = Batch
 
-},{"./errors":91,"./util":94}],91:[function(require,module,exports){
+},{"./errors":90,"./util":93}],90:[function(require,module,exports){
 /* Copyright (c) 2012-2014 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT License
@@ -16167,7 +15429,7 @@ module.exports = {
   , EncodingError       : createError('EncodingError', LevelUPError)
 }
 
-},{"errno":35}],92:[function(require,module,exports){
+},{"errno":34}],91:[function(require,module,exports){
 (function (process){
 /* Copyright (c) 2012-2014 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
@@ -16606,7 +15868,7 @@ module.exports.destroy = utilStatic('destroy')
 module.exports.repair  = utilStatic('repair')
 
 }).call(this,require('_process'))
-},{"./batch":90,"./errors":91,"./read-stream":93,"./util":94,"./write-stream":95,"_process":146,"deferred-leveldown":32,"events":36,"prr":147,"util":170,"xtend":104}],93:[function(require,module,exports){
+},{"./batch":89,"./errors":90,"./read-stream":92,"./util":93,"./write-stream":94,"_process":145,"deferred-leveldown":31,"events":35,"prr":146,"util":169,"xtend":103}],92:[function(require,module,exports){
 /* Copyright (c) 2012-2014 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT License <https://github.com/rvagg/node-levelup/blob/master/LICENSE.md>
@@ -16734,7 +15996,7 @@ ReadStream.prototype.toString = function () {
 
 module.exports = ReadStream
 
-},{"./errors":91,"./util":94,"readable-stream":102,"util":170,"xtend":104}],94:[function(require,module,exports){
+},{"./errors":90,"./util":93,"readable-stream":101,"util":169,"xtend":103}],93:[function(require,module,exports){
 (function (process,Buffer){
 /* Copyright (c) 2012-2014 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
@@ -16920,7 +16182,7 @@ module.exports = {
 }
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"../package.json":105,"./errors":91,"_process":146,"buffer":21,"leveldown":17,"leveldown/package":17,"semver":17,"xtend":104}],95:[function(require,module,exports){
+},{"../package.json":104,"./errors":90,"_process":145,"buffer":20,"leveldown":16,"leveldown/package":16,"semver":16,"xtend":103}],94:[function(require,module,exports){
 (function (process,global){
 /* Copyright (c) 2012-2014 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
@@ -17102,27 +16364,33 @@ WriteStream.prototype.toString = function () {
 module.exports = WriteStream
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./util":94,"_process":146,"bl":8,"stream":162,"util":170,"xtend":104}],96:[function(require,module,exports){
+},{"./util":93,"_process":145,"bl":7,"stream":161,"util":169,"xtend":103}],95:[function(require,module,exports){
+arguments[4][8][0].apply(exports,arguments)
+},{"dup":8}],96:[function(require,module,exports){
 arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],97:[function(require,module,exports){
+},{"./_stream_readable":98,"./_stream_writable":100,"_process":145,"core-util-is":30,"dup":9,"inherits":50}],97:[function(require,module,exports){
 arguments[4][10][0].apply(exports,arguments)
-},{"./_stream_readable":99,"./_stream_writable":101,"_process":146,"core-util-is":31,"dup":10,"inherits":51}],98:[function(require,module,exports){
+},{"./_stream_transform":99,"core-util-is":30,"dup":10,"inherits":50}],98:[function(require,module,exports){
 arguments[4][11][0].apply(exports,arguments)
-},{"./_stream_transform":100,"core-util-is":31,"dup":11,"inherits":51}],99:[function(require,module,exports){
+},{"_process":145,"buffer":20,"core-util-is":30,"dup":11,"events":35,"inherits":50,"isarray":95,"stream":161,"string_decoder/":102}],99:[function(require,module,exports){
 arguments[4][12][0].apply(exports,arguments)
-},{"_process":146,"buffer":21,"core-util-is":31,"dup":12,"events":36,"inherits":51,"isarray":96,"stream":162,"string_decoder/":103}],100:[function(require,module,exports){
+},{"./_stream_duplex":96,"core-util-is":30,"dup":12,"inherits":50}],100:[function(require,module,exports){
 arguments[4][13][0].apply(exports,arguments)
-},{"./_stream_duplex":97,"core-util-is":31,"dup":13,"inherits":51}],101:[function(require,module,exports){
+},{"./_stream_duplex":96,"_process":145,"buffer":20,"core-util-is":30,"dup":13,"inherits":50,"stream":161}],101:[function(require,module,exports){
 arguments[4][14][0].apply(exports,arguments)
-},{"./_stream_duplex":97,"_process":146,"buffer":21,"core-util-is":31,"dup":14,"inherits":51,"stream":162}],102:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":96,"./lib/_stream_passthrough.js":97,"./lib/_stream_readable.js":98,"./lib/_stream_transform.js":99,"./lib/_stream_writable.js":100,"_process":145,"dup":14,"stream":161}],102:[function(require,module,exports){
 arguments[4][15][0].apply(exports,arguments)
-},{"./lib/_stream_duplex.js":97,"./lib/_stream_passthrough.js":98,"./lib/_stream_readable.js":99,"./lib/_stream_transform.js":100,"./lib/_stream_writable.js":101,"_process":146,"dup":15,"stream":162}],103:[function(require,module,exports){
-arguments[4][16][0].apply(exports,arguments)
-},{"buffer":21,"dup":16}],104:[function(require,module,exports){
-arguments[4][5][0].apply(exports,arguments)
-},{"dup":5}],105:[function(require,module,exports){
+},{"buffer":20,"dup":15}],103:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"dup":4}],104:[function(require,module,exports){
 module.exports={
-  "_from": "levelup@^0.18.2",
+  "_args": [
+    [
+      "levelup@0.18.6",
+      "/Users/Shared/htdocs/github/THREE.Highres"
+    ]
+  ],
+  "_from": "levelup@0.18.6",
   "_id": "levelup@0.18.6",
   "_inBundle": false,
   "_integrity": "sha1-5qAcsIlhbI7MApHCqb0/DETj5es=",
@@ -17132,22 +16400,21 @@ module.exports={
     "inherits": "2.0.3"
   },
   "_requested": {
-    "type": "range",
+    "type": "version",
     "registry": true,
-    "raw": "levelup@^0.18.2",
+    "raw": "levelup@0.18.6",
     "name": "levelup",
     "escapedName": "levelup",
-    "rawSpec": "^0.18.2",
+    "rawSpec": "0.18.6",
     "saveSpec": null,
-    "fetchSpec": "^0.18.2"
+    "fetchSpec": "0.18.6"
   },
   "_requiredBy": [
     "/browserify-fs"
   ],
   "_resolved": "https://registry.npmjs.org/levelup/-/levelup-0.18.6.tgz",
-  "_shasum": "e6a01cb089616c8ecc0291c2a9bd3f0c44e3e5eb",
-  "_spec": "levelup@^0.18.2",
-  "_where": "/Users/Shared/htdocs/github/THREE.Highres/node_modules/browserify-fs",
+  "_spec": "0.18.6",
+  "_where": "/Users/Shared/htdocs/github/THREE.Highres",
   "browser": {
     "leveldown": false,
     "leveldown/package": false,
@@ -17156,7 +16423,6 @@ module.exports={
   "bugs": {
     "url": "https://github.com/rvagg/node-levelup/issues"
   },
-  "bundleDependencies": false,
   "contributors": [
     {
       "name": "Rod Vagg",
@@ -17233,7 +16499,6 @@ module.exports={
     "semver": "~2.3.1",
     "xtend": "~3.0.0"
   },
-  "deprecated": false,
   "description": "Fast & simple storage - a Node.js-style LevelDB wrapper",
   "devDependencies": {
     "async": "*",
@@ -17278,7 +16543,7 @@ module.exports={
   "version": "0.18.6"
 }
 
-},{}],106:[function(require,module,exports){
+},{}],105:[function(require,module,exports){
 (function (Buffer){
 
 exports.compare = function (a, b) {
@@ -17451,9 +16716,9 @@ exports.filter = function (range, compare) {
 
 
 }).call(this,{"isBuffer":require("../is-buffer/index.js")})
-},{"../is-buffer/index.js":52}],107:[function(require,module,exports){
-arguments[4][78][0].apply(exports,arguments)
-},{"./shim":108,"dup":78}],108:[function(require,module,exports){
+},{"../is-buffer/index.js":51}],106:[function(require,module,exports){
+arguments[4][77][0].apply(exports,arguments)
+},{"./shim":107,"dup":77}],107:[function(require,module,exports){
 (function () {
 	"use strict";
 
@@ -17499,12 +16764,12 @@ arguments[4][78][0].apply(exports,arguments)
 }());
 
 
-},{"foreach":37,"is":53}],109:[function(require,module,exports){
+},{"foreach":36,"is":52}],108:[function(require,module,exports){
 module.exports = function (num, base) {
   return parseInt(num.toString(), base || 8)
 }
 
-},{}],110:[function(require,module,exports){
+},{}],109:[function(require,module,exports){
 var wrappy = require('wrappy')
 module.exports = wrappy(once)
 module.exports.strict = wrappy(onceStrict)
@@ -17548,7 +16813,7 @@ function onceStrict (fn) {
   return f
 }
 
-},{"wrappy":171}],111:[function(require,module,exports){
+},{"wrappy":170}],110:[function(require,module,exports){
 'use strict';
 
 
@@ -17652,7 +16917,7 @@ exports.setTyped = function (on) {
 
 exports.setTyped(TYPED_OK);
 
-},{}],112:[function(require,module,exports){
+},{}],111:[function(require,module,exports){
 'use strict';
 
 // Note: adler32 takes 12% for level 0 and 2% for level 6.
@@ -17686,7 +16951,7 @@ function adler32(adler, buf, len, pos) {
 
 module.exports = adler32;
 
-},{}],113:[function(require,module,exports){
+},{}],112:[function(require,module,exports){
 'use strict';
 
 
@@ -17738,7 +17003,7 @@ module.exports = {
   //Z_NULL:                 null // Use -1 or null inline, depending on var type
 };
 
-},{}],114:[function(require,module,exports){
+},{}],113:[function(require,module,exports){
 'use strict';
 
 // Note: we can't get significant speed boost here.
@@ -17781,7 +17046,7 @@ function crc32(crc, buf, len, pos) {
 
 module.exports = crc32;
 
-},{}],115:[function(require,module,exports){
+},{}],114:[function(require,module,exports){
 'use strict';
 
 var utils   = require('../utils/common');
@@ -19638,7 +18903,7 @@ exports.deflatePrime = deflatePrime;
 exports.deflateTune = deflateTune;
 */
 
-},{"../utils/common":111,"./adler32":112,"./crc32":114,"./messages":119,"./trees":120}],116:[function(require,module,exports){
+},{"../utils/common":110,"./adler32":111,"./crc32":113,"./messages":118,"./trees":119}],115:[function(require,module,exports){
 'use strict';
 
 // See state defs from inflate.js
@@ -19966,7 +19231,7 @@ module.exports = function inflate_fast(strm, start) {
   return;
 };
 
-},{}],117:[function(require,module,exports){
+},{}],116:[function(require,module,exports){
 'use strict';
 
 
@@ -21506,7 +20771,7 @@ exports.inflateSyncPoint = inflateSyncPoint;
 exports.inflateUndermine = inflateUndermine;
 */
 
-},{"../utils/common":111,"./adler32":112,"./crc32":114,"./inffast":116,"./inftrees":118}],118:[function(require,module,exports){
+},{"../utils/common":110,"./adler32":111,"./crc32":113,"./inffast":115,"./inftrees":117}],117:[function(require,module,exports){
 'use strict';
 
 
@@ -21835,7 +21100,7 @@ module.exports = function inflate_table(type, lens, lens_index, codes, table, ta
   return 0;
 };
 
-},{"../utils/common":111}],119:[function(require,module,exports){
+},{"../utils/common":110}],118:[function(require,module,exports){
 'use strict';
 
 module.exports = {
@@ -21850,7 +21115,7 @@ module.exports = {
   '-6':   'incompatible version' /* Z_VERSION_ERROR (-6) */
 };
 
-},{}],120:[function(require,module,exports){
+},{}],119:[function(require,module,exports){
 'use strict';
 
 
@@ -23054,7 +22319,7 @@ exports._tr_flush_block  = _tr_flush_block;
 exports._tr_tally = _tr_tally;
 exports._tr_align = _tr_align;
 
-},{"../utils/common":111}],121:[function(require,module,exports){
+},{"../utils/common":110}],120:[function(require,module,exports){
 'use strict';
 
 
@@ -23085,7 +22350,7 @@ function ZStream() {
 
 module.exports = ZStream;
 
-},{}],122:[function(require,module,exports){
+},{}],121:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -23313,7 +22578,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":146}],123:[function(require,module,exports){
+},{"_process":145}],122:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -23514,7 +22779,7 @@ exports.dataToBitMap = function(data, bitmapInfo) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./interlace":133,"buffer":21}],124:[function(require,module,exports){
+},{"./interlace":132,"buffer":20}],123:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -23651,7 +22916,7 @@ module.exports = function(dataIn, width, height, options) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./constants":126,"buffer":21}],125:[function(require,module,exports){
+},{"./constants":125,"buffer":20}],124:[function(require,module,exports){
 (function (process,Buffer){
 'use strict';
 
@@ -23864,7 +23129,7 @@ ChunkStream.prototype._process = function() {
 };
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":146,"buffer":21,"stream":162,"util":170}],126:[function(require,module,exports){
+},{"_process":145,"buffer":20,"stream":161,"util":169}],125:[function(require,module,exports){
 'use strict';
 
 
@@ -23900,7 +23165,7 @@ module.exports = {
   GAMMA_DIVISION: 100000
 };
 
-},{}],127:[function(require,module,exports){
+},{}],126:[function(require,module,exports){
 'use strict';
 
 var crcTable = [];
@@ -23946,7 +23211,7 @@ CrcCalculator.crc32 = function(buf) {
   return crc ^ -1;
 };
 
-},{}],128:[function(require,module,exports){
+},{}],127:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24135,7 +23400,7 @@ module.exports = function(pxData, width, height, options, bpp) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./paeth-predictor":137,"buffer":21}],129:[function(require,module,exports){
+},{"./paeth-predictor":136,"buffer":20}],128:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24164,7 +23429,7 @@ var FilterAsync = module.exports = function(bitmapInfo) {
 util.inherits(FilterAsync, ChunkStream);
 
 }).call(this,require("buffer").Buffer)
-},{"./chunkstream":125,"./filter-parse":131,"buffer":21,"util":170}],130:[function(require,module,exports){
+},{"./chunkstream":124,"./filter-parse":130,"buffer":20,"util":169}],129:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24191,7 +23456,7 @@ exports.process = function(inBuffer, bitmapInfo) {
   return Buffer.concat(outBuffers);
 };
 }).call(this,require("buffer").Buffer)
-},{"./filter-parse":131,"./sync-reader":144,"buffer":21}],131:[function(require,module,exports){
+},{"./filter-parse":130,"./sync-reader":143,"buffer":20}],130:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24366,7 +23631,7 @@ Filter.prototype._reverseFilterLine = function(rawData) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./interlace":133,"./paeth-predictor":137,"buffer":21}],132:[function(require,module,exports){
+},{"./interlace":132,"./paeth-predictor":136,"buffer":20}],131:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24459,7 +23724,7 @@ module.exports = function(indata, imageData) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":21}],133:[function(require,module,exports){
+},{"buffer":20}],132:[function(require,module,exports){
 'use strict';
 
 // Adam 7
@@ -24547,7 +23812,7 @@ exports.getInterlaceIterator = function(width) {
     return (outerX * 4) + (outerY * width * 4);
   };
 };
-},{}],134:[function(require,module,exports){
+},{}],133:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24596,7 +23861,7 @@ PackerAsync.prototype.pack = function(data, width, height, gamma) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./constants":126,"./packer":136,"buffer":21,"stream":162,"util":170}],135:[function(require,module,exports){
+},{"./constants":125,"./packer":135,"buffer":20,"stream":161,"util":169}],134:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24645,7 +23910,7 @@ module.exports = function(metaData, opt) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./constants":126,"./packer":136,"buffer":21,"zlib":20}],136:[function(require,module,exports){
+},{"./constants":125,"./packer":135,"buffer":20,"zlib":19}],135:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -24756,7 +24021,7 @@ Packer.prototype.packIEND = function() {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./bitpacker":124,"./constants":126,"./crc":127,"./filter-pack":128,"buffer":21,"zlib":20}],137:[function(require,module,exports){
+},{"./bitpacker":123,"./constants":125,"./crc":126,"./filter-pack":127,"buffer":20,"zlib":19}],136:[function(require,module,exports){
 'use strict';
 
 module.exports = function paethPredictor(left, above, upLeft) {
@@ -24774,7 +24039,7 @@ module.exports = function paethPredictor(left, above, upLeft) {
   }
   return upLeft;
 };
-},{}],138:[function(require,module,exports){
+},{}],137:[function(require,module,exports){
 'use strict';
 
 var util = require('util');
@@ -24922,7 +24187,7 @@ ParserAsync.prototype._complete = function(filteredData) {
   this.emit('parsed', normalisedBitmapData);
 };
 
-},{"./bitmapper":123,"./chunkstream":125,"./filter-parse-async":129,"./format-normaliser":132,"./parser":140,"util":170,"zlib":20}],139:[function(require,module,exports){
+},{"./bitmapper":122,"./chunkstream":124,"./filter-parse-async":128,"./format-normaliser":131,"./parser":139,"util":169,"zlib":19}],138:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -25022,7 +24287,7 @@ module.exports = function(buffer, options) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./bitmapper":123,"./filter-parse-sync":130,"./format-normaliser":132,"./parser":140,"./sync-inflate":143,"./sync-reader":144,"buffer":21,"zlib":20}],140:[function(require,module,exports){
+},{"./bitmapper":122,"./filter-parse-sync":129,"./format-normaliser":131,"./parser":139,"./sync-inflate":142,"./sync-reader":143,"buffer":20,"zlib":19}],139:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -25315,7 +24580,7 @@ Parser.prototype._parseIEND = function(data) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"./constants":126,"./crc":127,"buffer":21}],141:[function(require,module,exports){
+},{"./constants":125,"./crc":126,"buffer":20}],140:[function(require,module,exports){
 'use strict';
 
 
@@ -25333,7 +24598,7 @@ exports.write = function(png, options) {
   return pack(png, options);
 };
 
-},{"./packer-sync":135,"./parser-sync":139}],142:[function(require,module,exports){
+},{"./packer-sync":134,"./parser-sync":138}],141:[function(require,module,exports){
 (function (process,Buffer){
 'use strict';
 
@@ -25510,7 +24775,7 @@ PNG.prototype.adjustGamma = function() {
 };
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./packer-async":134,"./parser-async":138,"./png-sync":141,"_process":146,"buffer":21,"stream":162,"util":170}],143:[function(require,module,exports){
+},{"./packer-async":133,"./parser-async":137,"./png-sync":140,"_process":145,"buffer":20,"stream":161,"util":169}],142:[function(require,module,exports){
 (function (process,Buffer){
 'use strict';
 
@@ -25669,7 +24934,7 @@ exports.createInflate = createInflate;
 exports.inflateSync = inflateSync;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":146,"assert":6,"buffer":21,"util":170,"zlib":20}],144:[function(require,module,exports){
+},{"_process":145,"assert":5,"buffer":20,"util":169,"zlib":19}],143:[function(require,module,exports){
 'use strict';
 
 var SyncReader = module.exports = function(buffer) {
@@ -25722,7 +24987,7 @@ SyncReader.prototype.process = function() {
 
 };
 
-},{}],145:[function(require,module,exports){
+},{}],144:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -25769,7 +25034,7 @@ function nextTick(fn, arg1, arg2, arg3) {
 }
 
 }).call(this,require('_process'))
-},{"_process":146}],146:[function(require,module,exports){
+},{"_process":145}],145:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -25955,7 +25220,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],147:[function(require,module,exports){
+},{}],146:[function(require,module,exports){
 /*!
   * prr
   * (c) 2013 Rod Vagg <rod@vagg.org>
@@ -26019,10 +25284,10 @@ process.umask = function() { return 0; };
 
   return prr
 })
-},{}],148:[function(require,module,exports){
+},{}],147:[function(require,module,exports){
 module.exports = require('./lib/_stream_duplex.js');
 
-},{"./lib/_stream_duplex.js":149}],149:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":148}],148:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26147,7 +25412,7 @@ function forEach(xs, f) {
     f(xs[i], i);
   }
 }
-},{"./_stream_readable":151,"./_stream_writable":153,"core-util-is":31,"inherits":51,"process-nextick-args":145}],150:[function(require,module,exports){
+},{"./_stream_readable":150,"./_stream_writable":152,"core-util-is":30,"inherits":50,"process-nextick-args":144}],149:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26195,7 +25460,7 @@ function PassThrough(options) {
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
-},{"./_stream_transform":152,"core-util-is":31,"inherits":51}],151:[function(require,module,exports){
+},{"./_stream_transform":151,"core-util-is":30,"inherits":50}],150:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -27205,7 +26470,7 @@ function indexOf(xs, x) {
   return -1;
 }
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":149,"./internal/streams/BufferList":154,"./internal/streams/destroy":155,"./internal/streams/stream":156,"_process":146,"core-util-is":31,"events":36,"inherits":51,"isarray":54,"process-nextick-args":145,"safe-buffer":161,"string_decoder/":164,"util":17}],152:[function(require,module,exports){
+},{"./_stream_duplex":148,"./internal/streams/BufferList":153,"./internal/streams/destroy":154,"./internal/streams/stream":155,"_process":145,"core-util-is":30,"events":35,"inherits":50,"isarray":53,"process-nextick-args":144,"safe-buffer":160,"string_decoder/":163,"util":16}],151:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -27420,7 +26685,7 @@ function done(stream, er, data) {
 
   return stream.push(null);
 }
-},{"./_stream_duplex":149,"core-util-is":31,"inherits":51}],153:[function(require,module,exports){
+},{"./_stream_duplex":148,"core-util-is":30,"inherits":50}],152:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -28087,7 +27352,7 @@ Writable.prototype._destroy = function (err, cb) {
   cb(err);
 };
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":149,"./internal/streams/destroy":155,"./internal/streams/stream":156,"_process":146,"core-util-is":31,"inherits":51,"process-nextick-args":145,"safe-buffer":161,"util-deprecate":167}],154:[function(require,module,exports){
+},{"./_stream_duplex":148,"./internal/streams/destroy":154,"./internal/streams/stream":155,"_process":145,"core-util-is":30,"inherits":50,"process-nextick-args":144,"safe-buffer":160,"util-deprecate":166}],153:[function(require,module,exports){
 'use strict';
 
 /*<replacement>*/
@@ -28162,7 +27427,7 @@ module.exports = function () {
 
   return BufferList;
 }();
-},{"safe-buffer":161}],155:[function(require,module,exports){
+},{"safe-buffer":160}],154:[function(require,module,exports){
 'use strict';
 
 /*<replacement>*/
@@ -28235,13 +27500,13 @@ module.exports = {
   destroy: destroy,
   undestroy: undestroy
 };
-},{"process-nextick-args":145}],156:[function(require,module,exports){
+},{"process-nextick-args":144}],155:[function(require,module,exports){
 module.exports = require('events').EventEmitter;
 
-},{"events":36}],157:[function(require,module,exports){
+},{"events":35}],156:[function(require,module,exports){
 module.exports = require('./readable').PassThrough
 
-},{"./readable":158}],158:[function(require,module,exports){
+},{"./readable":157}],157:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = exports;
 exports.Readable = exports;
@@ -28250,13 +27515,13 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":149,"./lib/_stream_passthrough.js":150,"./lib/_stream_readable.js":151,"./lib/_stream_transform.js":152,"./lib/_stream_writable.js":153}],159:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":148,"./lib/_stream_passthrough.js":149,"./lib/_stream_readable.js":150,"./lib/_stream_transform.js":151,"./lib/_stream_writable.js":152}],158:[function(require,module,exports){
 module.exports = require('./readable').Transform
 
-},{"./readable":158}],160:[function(require,module,exports){
+},{"./readable":157}],159:[function(require,module,exports){
 module.exports = require('./lib/_stream_writable.js');
 
-},{"./lib/_stream_writable.js":153}],161:[function(require,module,exports){
+},{"./lib/_stream_writable.js":152}],160:[function(require,module,exports){
 /* eslint-disable node/no-deprecated-api */
 var buffer = require('buffer')
 var Buffer = buffer.Buffer
@@ -28320,7 +27585,7 @@ SafeBuffer.allocUnsafeSlow = function (size) {
   return buffer.SlowBuffer(size)
 }
 
-},{"buffer":21}],162:[function(require,module,exports){
+},{"buffer":20}],161:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -28449,7 +27714,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":36,"inherits":51,"readable-stream/duplex.js":148,"readable-stream/passthrough.js":157,"readable-stream/readable.js":158,"readable-stream/transform.js":159,"readable-stream/writable.js":160}],163:[function(require,module,exports){
+},{"events":35,"inherits":50,"readable-stream/duplex.js":147,"readable-stream/passthrough.js":156,"readable-stream/readable.js":157,"readable-stream/transform.js":158,"readable-stream/writable.js":159}],162:[function(require,module,exports){
 
 //force to a valid range
 var range = exports.range = function (obj) {
@@ -28523,7 +27788,7 @@ var satifies = exports.satisfies = function (key, range) {
 
 
 
-},{}],164:[function(require,module,exports){
+},{}],163:[function(require,module,exports){
 'use strict';
 
 var Buffer = require('safe-buffer').Buffer;
@@ -28796,7 +28061,7 @@ function simpleWrite(buf) {
 function simpleEnd(buf) {
   return buf && buf.length ? this.write(buf) : '';
 }
-},{"safe-buffer":161}],165:[function(require,module,exports){
+},{"safe-buffer":160}],164:[function(require,module,exports){
 (function (Buffer){
 /**
  * Convert a typed array to a Buffer without a copy
@@ -28819,7 +28084,7 @@ module.exports = function (arr) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":21}],166:[function(require,module,exports){
+},{"buffer":20}],165:[function(require,module,exports){
 var undefined = (void 0); // Paranoia
 
 // Beyond this value, index getters/setters (i.e. array[0], array[1]) are so slow to
@@ -29451,7 +28716,7 @@ function packF32(v) { return packIEEE754(v, 8, 23); }
 
 }());
 
-},{}],167:[function(require,module,exports){
+},{}],166:[function(require,module,exports){
 (function (global){
 
 /**
@@ -29522,16 +28787,16 @@ function config (name) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],168:[function(require,module,exports){
-arguments[4][51][0].apply(exports,arguments)
-},{"dup":51}],169:[function(require,module,exports){
+},{}],167:[function(require,module,exports){
+arguments[4][50][0].apply(exports,arguments)
+},{"dup":50}],168:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],170:[function(require,module,exports){
+},{}],169:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -30121,7 +29386,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":169,"_process":146,"inherits":168}],171:[function(require,module,exports){
+},{"./support/isBuffer":168,"_process":145,"inherits":167}],170:[function(require,module,exports){
 // Returns a wrapper function that returns a wrapped callback
 // The wrapper function should do some stuff, and return a
 // presumably different callback function.
@@ -30156,5 +29421,600 @@ function wrappy (fn, cb) {
   }
 }
 
-},{}]},{},[1])(1)
+},{}],171:[function(require,module,exports){
+'use strict';
+
+var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+var download = require('downloadjs');
+var PNG = require('pngjs').PNG;
+var fs = require('browserify-fs');
+
+var Highres = function () {
+  function Highres(renderer, scene, camera, options) {
+    _classCallCheck(this, Highres);
+
+    this.renderer = renderer;
+    this.scene = scene;
+    this.camera = camera;
+    this.onStart = options ? options.onStart : undefined;
+    this.onBeforeRender = options ? options.onBeforeRender : undefined;
+    this.onAfterRender = options ? options.onAfterRender : undefined;
+    this.onExit = options ? options.onExit : undefined;
+
+    this.default = {
+      width: 2048,
+      height: 2048
+    };
+
+    this.state = {
+      mode: 'normal', // can be 'normal' (default) or 'depth'
+      maxFactor: 1,
+      originalWidth: null,
+      originalHeight: null,
+      width: null,
+      height: null,
+      factor: null,
+      busy: false
+
+      // Check GPU texture size limits and set a maximum factor allowed
+    };var maxTextureSize = this.renderer.capabilities.maxTextureSize;
+    var maxFactor = Math.floor(maxTextureSize / this.default.width);
+    this.set('maxTextureSize', maxTextureSize);
+    this.set('maxFactor', maxFactor);
+
+    this.initUI();
+    // this.initWebWorker()
+  }
+
+  // initWebWorker () {
+  //   this.worker = new WebWorker('js/worker/highres-worker.js')
+  //   this.worker.on('PNGready', this.downloadPNG.bind(this))
+  // }
+
+  _createClass(Highres, [{
+    key: 'set',
+    value: function set(key, value) {
+      this.state[key] = value;
+    }
+  }, {
+    key: 'get',
+    value: function get(key) {
+      return this.state[key];
+    }
+  }, {
+    key: 'initUI',
+    value: function initUI() {
+      this.initDom();
+      this.initStyles();
+      this.setupKeyEvents();
+
+      this.onResize(true);
+    }
+  }, {
+    key: 'activateUI',
+    value: function activateUI() {
+      if (this.state.activeUI) return;
+      this.set('activeUI', true);
+
+      this.hideAllMessages();
+
+      // Show message box
+      document.getElementById(this.domId + '').classList.add('show');
+      document.getElementById(this.domId + '-message').classList.add('show');
+
+      // Update mode title
+      var mode = this.get('mode');
+      var diffuseTitle = document.getElementById(this.domId + '-normal-mode-title');
+      var depthTitle = document.getElementById(this.domId + '-depth-mode-title');
+      if (mode === 'normal') {
+        diffuseTitle.classList.add('show');
+        depthTitle.classList.remove('show');
+      } else {
+        diffuseTitle.classList.remove('show');
+        depthTitle.classList.add('show');
+      }
+
+      // Activate resize event
+      window.addEventListener('resize', this.onResize.bind(this));
+
+      console.log('Ready to render a high resolution image. \n        This operation is CPU and memory intensive.\n        If your browser crashes, please restart it before retrying.');
+    }
+  }, {
+    key: 'deactivateUI',
+    value: function deactivateUI() {
+      this.set('activeUI', false);
+
+      this.hideAllMessages();
+      document.getElementById(this.domId).classList.remove('show');
+      document.getElementById(this.domId + '-message').classList.add('show');
+
+      // Remove resize event
+      window.removeEventListener('resize', this.onResize.bind(this));
+
+      console.info('High resolution tool inactive.');
+    }
+  }, {
+    key: 'setupKeyEvents',
+    value: function setupKeyEvents() {
+      var _this = this;
+
+      document.body.addEventListener('keyup', function (e) {
+        if (_this.state.busy) return;
+
+        var start = function start() {
+          _this.activateUI();
+          // User function
+          if (_this.onStart) {
+            _this.onStart();
+          }
+        };
+
+        // Activate depth mode
+        if (e.key === '-') {
+          _this.set('mode', 'depth');
+          start();
+        }
+
+        // Activate diffuse mode
+        if (e.key === '+') {
+          _this.set('mode', 'normal');
+          start();
+        }
+
+        // Deactivate
+        if (e.keyCode === 27) {
+          _this.deactivateUI();
+
+          // User function
+          if (_this.onExit) {
+            _this.onExit();
+          }
+        }
+
+        // Start the high res capture by pressing any number
+        if (e.key.match(/^\d+$/)) {
+          if (!_this.state.activeUI) {
+            console.warn('The high resolution tool is inactive. To activate press + (or - for depth rendering).');
+            return;
+          }
+
+          // User function
+          if (_this.onBeforeRender) {
+            _this.onBeforeRender();
+          }
+
+          // Get factor
+          var factor = Math.min(parseInt(e.key), _this.state.maxFactor);
+          _this.set('factor', factor);
+
+          // Show loader
+          _this.showLoader();
+
+          // Save start time
+          _this.set('startTime', Date.now());
+
+          // Launch request (and restore renderer state when finished)
+          setTimeout(function () {
+            _this.request(factor).then(function (filename) {
+              _this.hideAllMessages();
+              _this.set('endTime', Date.now());
+              var duration = _this.get('endTime') - _this.get('startTime');
+              duration = (duration / 1000).toFixed(2);
+
+              document.getElementById(_this.domId + '-filename').innerHTML = filename;
+              document.getElementById(_this.domId + '-duration').innerHTML = duration + ' seconds';
+              document.getElementById(_this.domId + '-complete').classList.add('show');
+            });
+          }, 250); // <<== important - tell the browser to finish everything before launching the request
+        }
+      });
+    }
+  }, {
+    key: 'showLoader',
+    value: function showLoader() {
+      var w = this.default.width * this.state.factor;
+      var h = this.default.height * this.state.factor;
+      w = w || this.state.originalWidth;
+      h = h || this.state.originalHeight;
+
+      this.hideAllMessages();
+      document.getElementById(this.domId + '-width').innerHTML = w;
+      document.getElementById(this.domId + '-height').innerHTML = h;
+      document.getElementById(this.domId + '-dpi').innerHTML = Math.floor(w / 300) + ' x ' + Math.floor(h / 300);
+      document.getElementById(this.domId + '-loader').classList.add('show');
+    }
+  }, {
+    key: 'request',
+    value: function request(zoom) {
+      var _this2 = this;
+
+      if (!this.state.busy) {
+        console.log('High res rendering started. Zoom factor:', zoom);
+
+        this.onResize(true);
+
+        return new window.Promise(function (resolve, reject) {
+          var w = void 0,
+              h = void 0,
+              factor = void 0;
+
+          if (zoom === 0) {
+            w = _this2.get('originalWidth');
+            h = _this2.get('originalHeight');
+            factor = 1;
+          } else {
+            w = _this2.default.width;
+            h = _this2.default.height;
+            factor = zoom;
+          }
+
+          _this2.set('width', w);
+          _this2.set('height', h);
+          _this2.set('factor', factor);
+          _this2.set('busy', true);
+
+          console.log(_this2.state);
+
+          // Wait
+          _this2.onRendered = function (filename) {
+            return resolve(filename);
+          };
+          _this2.onError = function () {
+            return reject();
+          };
+
+          // Start
+          _this2.render();
+        });
+      } else {
+        return Promise.resolve();
+      }
+    }
+
+    /**
+     * Creates a new SMAAPass and ensures that images are fully loaded.
+     *
+     * @param {Function} done - A callback. The new SMAAPass will be passed to this function.
+     */
+    // createSMAAPass (done) {
+    //   this.smaaPass = new SMAAPass(window.Image)
+
+    //   const areaTexture = this.smaaPass.weightsMaterial.uniforms.tArea.value
+    //   const searchTexture = this.smaaPass.weightsMaterial.uniforms.tSearch.value
+
+    //   areaTexture.image.addEventListener('load', () => {
+    //     if (searchTexture.image.complete) {
+    //       // done(this.smaaPass)
+    //     }
+    //   })
+
+    //   searchTexture.image.addEventListener('load', () => {
+    //     if (areaTexture.image.complete) {
+    //       if (!searchTexture.image.complete) {
+    //         this.createSMAAPass(done)
+    //       } else {
+    //         done(this.smaaPass)
+    //       }
+    //     }
+    //   })
+
+    //   // Reload.
+    //   areaTexture.image.src = this.smaaPass.weightsMaterial.areaImage
+    //   searchTexture.image.src = this.smaaPass.weightsMaterial.searchImage
+    // }
+
+    // Update the renderer with high res size and pixel ratio
+
+  }, {
+    key: 'setupHighresRenderer',
+    value: function setupHighresRenderer() {
+      this.camera.aspect = this.state.width / this.state.height;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setPixelRatio(this.state.factor);
+      this.renderer.setSize(this.state.width, this.state.height);
+    }
+  }, {
+    key: 'render',
+    value: function render() {
+      this.setupHighresRenderer();
+
+      var size = this.renderer.getDrawingBufferSize();
+      var arraySize = size.width * size.height * 4;
+      var array = new Uint8Array(arraySize);
+
+      if (this.get('mode') === 'normal') {
+        this.renderNormal(array, size);
+      } else {
+        this.renderDepth(array, size);
+      }
+    }
+  }, {
+    key: 'renderNormal',
+    value: function renderNormal(array, size) {
+      // METHOD 1 - Normal render target + three.js renderer (fastest, no Anti-Aliasing)
+      // const anisotropy = this.renderer.capabilities.getMaxAnisotropy()
+      this.rt = new THREE.WebGLRenderTarget(size.width, size.height);
+      this.renderer.render(this.scene, this.camera, this.rt);
+      this.finishRender(array, size);
+
+      // METHOD 2 - Postprocessing with SMAA (best quality, slower)
+      // this.createSMAAPass(smaaPass => {
+      //   this.composer = new EffectComposer(this.renderer)
+      //   this.composer.addPass(new RenderPass(this.scene, this.camera))
+      //   // const pass = new SMAAPass(window.Image) // buggy: image must be loaded async
+      //   this.composer.addPass(smaaPass)
+      //   this.composer.render()
+      //   this.rt = this.composer.writeBuffer
+      //   this.finishRender(array, size)
+      // })
+    }
+  }, {
+    key: 'renderDepth',
+    value: function renderDepth(array, size) {
+      // High res render target
+      this.rt = new THREE.WebGLRenderTarget(size.width, size.height);
+
+      // Create a multi render target with Float buffers
+      var target = new THREE.WebGLRenderTarget(size.width, size.height);
+      target.texture.format = THREE.RGBFormat;
+      target.texture.minFilter = THREE.NearestFilter;
+      target.texture.magFilter = THREE.NearestFilter;
+      target.texture.generateMipmaps = false;
+      target.stencilBuffer = false;
+      target.depthBuffer = true;
+      target.depthTexture = new THREE.DepthTexture();
+      target.depthTexture.type = THREE.UnsignedShortType;
+
+      // Setup post processing stage
+      var postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      var postMaterial = new THREE.ShaderMaterial({
+        vertexShader: '\n        varying vec2 vUv;\n              void main() {\n                  vUv = uv;\n                  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);\n              }',
+        fragmentShader: '\n        #include <packing>\n              varying vec2 vUv;\n              uniform sampler2D tDiffuse;\n              uniform sampler2D tDepth;\n              uniform float cameraNear;\n              uniform float cameraFar;\n              float readDepth (sampler2D depthSampler, vec2 coord) {\n                  float fragCoordZ = texture2D(depthSampler, coord).x;\n                  float viewZ = perspectiveDepthToViewZ( fragCoordZ, cameraNear, cameraFar );\n                  return viewZToOrthographicDepth( viewZ, cameraNear, cameraFar );\n              }\n              void main() {\n                  vec3 diffuse = texture2D(tDiffuse, vUv).rgb;\n                  float depth = readDepth(tDepth, vUv);\n                  gl_FragColor.rgb = vec3(depth);\n                  gl_FragColor.a = 1.0;\n              }',
+        uniforms: {
+          cameraNear: { value: this.camera.near },
+          cameraFar: { value: this.camera.far },
+          tDiffuse: { value: target.texture },
+          tDepth: { value: target.depthTexture }
+        }
+      });
+      var postPlane = new THREE.PlaneBufferGeometry(2, 2);
+      var postQuad = new THREE.Mesh(postPlane, postMaterial);
+      var postScene = new THREE.Scene();
+      postScene.add(postQuad);
+
+      // Render
+      this.renderer.render(this.scene, this.camera, target);
+      this.renderer.render(postScene, postCamera, this.rt);
+
+      this.finishRender(array, size);
+    }
+
+    // Fill the array with data from the pixels
+
+  }, {
+    key: 'finishRender',
+    value: function finishRender(array, size) {
+      this.renderer.readRenderTargetPixels(this.rt, 0, 0, size.width, size.height, array);
+
+      var png = this.convertArrayToPNG(array, size);
+      this.downloadPNG(png);
+    }
+
+    // Convert buffer to PNG
+
+  }, {
+    key: 'convertArrayToPNG',
+    value: function convertArrayToPNG(array, size) {
+      var image = new PNG({
+        width: size.width,
+        height: size.height
+      });
+
+      var i = void 0,
+          wi = void 0;
+      for (var x = 0; x < size.width; x++) {
+        for (var y = 0; y < size.height; y++) {
+          // PNG indeces
+          i = size.width * y + x << 2;
+
+          // Flip Y
+          // const flipY = size.height - y
+
+          // WebGL indeces
+          wi = size.width * (size.height - y) + x << 2;
+
+          image.data[i] = array[wi]; // r
+          image.data[i + 1] = array[wi + 1]; // g
+          image.data[i + 2] = array[wi + 2]; // b
+          image.data[i + 3] = array[wi + 3]; // a
+        }
+      }
+
+      return image;
+    }
+
+    // Try to write and download the PNG file
+
+  }, {
+    key: 'downloadPNG',
+    value: function downloadPNG(image) {
+      var _this3 = this;
+
+      try {
+        image.pack().pipe(fs.createWriteStream('newfile.png')).on('finish', function (e) {
+          fs.readFile('newfile.png', function (error, data) {
+            if (error) {
+              _this3.manageError(error);
+            } else {
+              var blob = new window.Blob([data], { type: 'image/png' });
+              var w = _this3.state.width * _this3.state.factor;
+              var h = _this3.state.height * _this3.state.factor;
+              var filename = 'hr-' + w + 'x' + h + '-' + Date.now();
+              download(blob, filename, 'image/png');
+
+              _this3.restorePreviousState();
+              _this3.onRendered(filename + '.png');
+            }
+          });
+        });
+      } catch (error) {
+        this.manageError(error);
+      }
+    }
+  }, {
+    key: 'manageError',
+    value: function manageError(error) {
+      this.hideAllMessages();
+      document.getElementById(this.domId + '-error').classList.add('show');
+      this.onError(error);
+      this.restorePreviousState();
+    }
+  }, {
+    key: 'restorePreviousState',
+    value: function restorePreviousState() {
+      this.set('busy', false);
+      this.set('activeUI', false);
+      this.rt.dispose();
+      this.onResize();
+
+      // User function
+      if (this.onAfterRender) {
+        this.onAfterRender();
+      }
+
+      console.log('High res rendering complete.');
+    }
+  }, {
+    key: 'onResize',
+    value: function onResize(onlyUpdateState) {
+      if (this.state.busy) return;
+
+      // const canvas = this.renderer.domElement
+      // const canvasSize = canvas.parentElement.getBoundingClientRect()
+      // const w = Math.floor(canvasSize.width)
+      // const h = Math.floor(canvasSize.height)
+
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      this.set('originalWidth', w);
+      this.set('originalHeight', h);
+      this.resizeCaptureArea();
+
+      if (!onlyUpdateState) {
+        this.camera.aspect = w / h;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+        this.renderer.setSize(w, h, true);
+      }
+    }
+  }, {
+    key: 'resizeCaptureArea',
+    value: function resizeCaptureArea() {
+      var captureArea = document.getElementById(this.domId + '-capture-area');
+      var h = this.get('originalHeight');
+      var ratio = this.default.width / this.default.height;
+
+      var cW = h * ratio;
+      var cH = h;
+
+      captureArea.style.width = cW + 'px';
+      captureArea.style.height = cH + 'px';
+    }
+  }, {
+    key: 'initDom',
+    value: function initDom() {
+      this.domId = 'high-res';
+      var get = function get(id) {
+        return document.getElementById(id);
+      };
+      var msgClass = this.domId + '-msg-box';
+      this.dom('div', this.domId, document.body);
+      this.dom('div', this.domId + '-capture-area', get(this.domId));
+      this.dom('div', this.domId + '-modal-wrapper', get(this.domId));
+      this.dom('div', this.domId + '-modal', get(this.domId + '-modal-wrapper'));
+
+      // Messages containers
+      this.dom('div', this.domId + '-message', get(this.domId + '-modal'), 'show ' + msgClass);
+      this.dom('div', this.domId + '-loader', get(this.domId + '-modal'), msgClass);
+      this.dom('div', this.domId + '-complete', get(this.domId + '-modal'), msgClass);
+      this.dom('div', this.domId + '-error', get(this.domId + '-modal'), msgClass);
+
+      // Info message
+      var w = this.default.width;
+      var h = this.default.height;
+      var factor = 2 + Math.round(Math.random() * (this.state.maxFactor - 2));
+      var hrW = w * factor;
+      var hrH = h * factor;
+      var inchW = Math.floor(hrW / 300);
+      var inchH = Math.floor(hrH / 300);
+      var maxTextureSize = this.state.maxTextureSize;
+      var maxFactor = this.state.maxFactor;
+      var maxInches = Math.floor(maxTextureSize / 300);
+
+      this.html('<div class="title mode" id="' + this.domId + '-normal-mode-title">High resolution rendering</div>\n          \n          <div class="title mode" id="' + this.domId + '-depth-mode-title">Depth rendering</div>\n        <br><br>\n        WARNING: <i>This can take time. The browser tab will be busy for a few seconds (or more).</i>\n        <ul>\n          <li>\n              To start rendering press a number from <strong>0 to ' + maxFactor + '</strong>.  \n              This value will be used as a factor of ' + w + ' x ' + h + ' and the result will be the size of the final PNG image (0 will result in a screenshot of the scene at your current resolution).\n          </li>\n          <li>\n              Your GPU supports ' + maxTextureSize + ' x ' + maxTextureSize + ' textures (' + maxInches + ' x ' + maxInches + ' inches at 300 dpi), so the maximum factor you can use is <strong>' + maxFactor + '</strong>.\n          </li>\n          <li>\n              The rectangle shows the area that will be captured (it can be larger than the viewport).\n          </li>\n        </ul>\n        \n        <strong>Example:</strong>\n        <br>\n        If you select <strong>' + factor + '</strong> you will get a ' + factor + '*' + w + ' x ' + factor + '*' + h + ' image = <strong>' + hrW + ' x ' + hrH + '</strong>.\n        <br>\n        That is a nice <strong>' + inchW + ' x ' + inchH + ' inches</strong> print at <strong>300 dpi</strong>.\n        <br><br>\n        Press ESC to exit.\n        ', this.domId + '-message');
+
+      // Loader message
+      this.html('<div class="title">Rendering</div>\n      <br><br>\n      Sit back and relax. A beautiful <span id="' + this.domId + '-width"></span> x <span id="' + this.domId + '-height"></span> \n      image (<span id="' + this.domId + '-dpi"></span> inches at 300 dpi) is on the way<span id="loader-dots">...</span>\n      <br><br>\n      The scene may resize and look distorted for a few seconds.\n      ', this.domId + '-loader');
+
+      // Done message
+      this.html('<div class="title">Rendering completed</div>\n      <br><br>\n      It took <strong id="' + this.domId + '-duration"></strong>. \n      The file <strong id="' + this.domId + '-filename"></strong> is ready.\n      <br><br>\n      Press ESC to exit. Or + to start again.\n      ', this.domId + '-complete');
+
+      // Error message
+      this.html('<div class="title">Erm...</div>\n      <br><br>\n      There was an error.\n      <br><br>\n      Press ESC to exit or reload the page.\n      ', this.domId + '-error');
+    }
+  }, {
+    key: 'dom',
+    value: function dom(elType, id, parent, className) {
+      var el = document.createElement(elType);
+      el.setAttribute('id', id || '');
+      el.className = className || '';
+      parent.appendChild(el);
+    }
+  }, {
+    key: 'html',
+    value: function html(code, id) {
+      document.getElementById(id).innerHTML = code;
+    }
+  }, {
+    key: 'hideAllMessages',
+    value: function hideAllMessages() {
+      var msg = document.getElementsByClassName(this.domId + '-msg-box');
+
+      for (var i = 0; i < msg.length; i++) {
+        msg[i].classList.remove('show');
+      }
+    }
+  }, {
+    key: 'initStyles',
+    value: function initStyles() {
+      var css = '#' + this.domId + ' {\n        position: fixed;\n        z-index: 1000;\n        width: 100%;\n        height: 100%;\n        top: 0;\n        left: 0;\n        display: none;\n      }\n  \n      #' + this.domId + '.show {\n        display: block;\n      }\n      \n      #' + this.domId + '-modal-wrapper {\n        position: absolute;\n        width: 37.5%;\n        min-width: 400px;\n        bottom: 20px;\n        left: 50%;\n        transform: translateX(-50%);\n      }\n  \n      #' + this.domId + '-modal {\n        position: relative;\n        width: 100%;\n        background-color: #FFF;\n        box-shadow: 0px 0px 30px 0px rgba(0,0,0,0.2);\n        padding: 20px;\n        color: #333;\n        font-size: 12px;\n        border-radius: 5px;\n        box-sizing: border-box;\n      }\n  \n      #' + this.domId + '-message {\n        \n      }\n  \n      .' + this.domId + '-msg-box {\n        display: none;\n      }\n      .' + this.domId + '-msg-box.show {\n        display: block;\n      }\n  \n      .title {\n        font-size: 14px;\n        font-weight: bold;\n      }\n  \n      .mode {\n        display: none;\n      }\n  \n      .mode.show {\n        display: block;\n      }\n  \n      #' + this.domId + '-loader {\n        \n      }\n  \n      #' + this.domId + '-complete {\n      }\n  \n      #' + this.domId + '-capture-area {\n        position: absolute;\n        box-sizing: content-box;\n        border: 1px solid #FFF;\n        // box-shadow:inset 0 0 20px 0 rgba(0,0,0,0.3);\n        box-shadow: 0 0 40px 0 rgba(0,0,0,0.5);\n        background-color: transparent;\n        left: 50%;\n        top: 50%;\n        transform: translateX(-50%) translateY(-50%);\n      }\n      ';
+
+      this.appendStyle(css);
+    }
+  }, {
+    key: 'appendStyle',
+    value: function appendStyle(css) {
+      var head = window.document.head || window.document.getElementsByTagName('head')[0];
+      var style = window.document.createElement('style');
+
+      style.type = 'text/css';
+      if (style.styleSheet) {
+        style.styleSheet.cssText = css;
+      } else {
+        style.appendChild(document.createTextNode(css));
+      }
+
+      head.appendChild(style);
+    }
+  }]);
+
+  return Highres;
+}();
+
+module.exports = Highres;
+
+},{"browserify-fs":17,"downloadjs":32,"pngjs":141}]},{},[171])(171)
 });

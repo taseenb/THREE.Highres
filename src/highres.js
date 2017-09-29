@@ -242,36 +242,36 @@ class Highres {
   }
 
   /**
-     * Creates a new SMAAPass and ensures that images are fully loaded.
-     *
-     * @param {Function} done - A callback. The new SMAAPass will be passed to this function.
-     */
-  createSMAAPass (done) {
-    this.smaaPass = new SMAAPass(window.Image)
+   * Creates a new SMAAPass and ensures that images are fully loaded.
+   *
+   * @param {Function} done - A callback. The new SMAAPass will be passed to this function.
+   */
+  // createSMAAPass (done) {
+  //   this.smaaPass = new SMAAPass(window.Image)
 
-    const areaTexture = this.smaaPass.weightsMaterial.uniforms.tArea.value
-    const searchTexture = this.smaaPass.weightsMaterial.uniforms.tSearch.value
+  //   const areaTexture = this.smaaPass.weightsMaterial.uniforms.tArea.value
+  //   const searchTexture = this.smaaPass.weightsMaterial.uniforms.tSearch.value
 
-    areaTexture.image.addEventListener('load', () => {
-      if (searchTexture.image.complete) {
-        // done(this.smaaPass)
-      }
-    })
+  //   areaTexture.image.addEventListener('load', () => {
+  //     if (searchTexture.image.complete) {
+  //       // done(this.smaaPass)
+  //     }
+  //   })
 
-    searchTexture.image.addEventListener('load', () => {
-      if (areaTexture.image.complete) {
-        if (!searchTexture.image.complete) {
-          this.createSMAAPass(done)
-        } else {
-          done(this.smaaPass)
-        }
-      }
-    })
+  //   searchTexture.image.addEventListener('load', () => {
+  //     if (areaTexture.image.complete) {
+  //       if (!searchTexture.image.complete) {
+  //         this.createSMAAPass(done)
+  //       } else {
+  //         done(this.smaaPass)
+  //       }
+  //     }
+  //   })
 
-    // Reload.
-    areaTexture.image.src = this.smaaPass.weightsMaterial.areaImage
-    searchTexture.image.src = this.smaaPass.weightsMaterial.searchImage
-  }
+  //   // Reload.
+  //   areaTexture.image.src = this.smaaPass.weightsMaterial.areaImage
+  //   searchTexture.image.src = this.smaaPass.weightsMaterial.searchImage
+  // }
 
   // Update the renderer with high res size and pixel ratio
   setupHighresRenderer () {

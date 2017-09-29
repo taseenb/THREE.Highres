@@ -2,9 +2,9 @@
   "name": "three.highres",
   "version": "0.0.1",
   "description": "",
-  "main": "index.js",
+  "main": "dist/THREE.Highres.js",
   "scripts": {
-    "build": "browserify highres.js -s Highres -o dist/highres.js"
+    "build": "browserify src/highres.js -s Highres -o dist/THREE.Highres.js"
   },
   "repository": {
     "type": "git",
@@ -21,9 +21,10 @@
   },
   "homepage": "https://github.com/taseenb/THREE.Highres#readme",
   "dependencies": {
+    "babel-polyfill": "^6.26.0",
+    "browserify-fs": "^1.0.0",
     "downloadjs": "^1.4.7",
-    "pngjs": "^3.3.0",
-    "browserify-fs": "^1.0.0"
+    "pngjs": "^3.3.0"
   },
   "devDependencies": {
     "babel-cli": "^6.26.0",
@@ -33,5 +34,29 @@
     "npm-run-all": "^4.1.1",
     "standard": "^10.0.3",
     "uglify-js": "^3.1.2"
+  },
+  "standard": {
+    "globals": [
+      "THREE"
+    ]
+  },
+  "browserify": {
+    "transform": [
+      "babelify"
+    ]
+  },
+  "babel": {
+    "presets": [
+      [
+        "env",
+        {
+          "targets": {
+            "browsers": [
+              "last 2 versions"
+            ]
+          }
+        }
+      ]
+    ]
   }
 }
