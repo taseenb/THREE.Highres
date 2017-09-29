@@ -2,7 +2,7 @@
   "name": "three.highres",
   "version": "0.0.1",
   "description": "",
-  "main": "dist/THREE.Highres.js",
+  "main": "src/highres.js",
   "scripts": {
     "build": "browserify src/highres.js -o dist/THREE.Highres.js",
     "pushall": "git add --all . && git commit -m \"update\" && git push",
