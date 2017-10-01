@@ -5,7 +5,7 @@ High resolution rendering to PNG for Three.js, including depth map rendering.
 
 ### Setup
 ```
-var highRes = new Highres(renderer, scene, camera, options)
+var highres = new Highres(renderer, scene, camera, options)
 highres.enable()
 ```
 
