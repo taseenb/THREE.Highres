@@ -42,9 +42,9 @@ Options:
 
 ### Usage
 
-Press + to start the high resolution rendering process.
+Press + to start the rendering process.
 
-Press - for the depth map rendering process.
+Press - for the depth map rendering.
 
 Follow the instructions.
 
