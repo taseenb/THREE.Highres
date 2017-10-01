@@ -20,8 +20,8 @@ Options:
     onStart: () => {
         // triggered when you press + or -
         // you can pause your animations here
-        // but leave orbit controls (or any navigation helper you need) 
-        // so you can still move in your scene and prepare the shot
+        // leave orbit controls (or any navigation helper you may need)
+        // hide elements you don't want to appear in the final rendering
     },
     onBeforeRender: () => {
         // triggered after you choose a number and the rendering is about to start
