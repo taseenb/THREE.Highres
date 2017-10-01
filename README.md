@@ -14,15 +14,19 @@ Options:
 ```
 {
     onStart: () => {
-        // you can pause animations here, but leave orbit controls if possible
+        // triggered when you press + or -
+        // you can pause your animations here, but leave orbit controls if possible
     },
     onBeforeRender: () => {
+        // triggered when you choose a number
         // make sure your application is not rendering at all now
     },
     onAfterRender: () => {
+        // triggered when the PNG is ready
         // you can restart rendering
     },
     onExit: () => {
+        // triggered when you press ESC
         // you can restart all your animations now
     }
 }
