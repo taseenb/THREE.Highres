@@ -7,7 +7,7 @@
     "build": "npm-run-all build:*",
     "build:standalone": "browserify src/highres.js --standalone window > dist/THREE.Highres.js",
     "build:compress": "uglifyjs -m -c -o dist/THREE.Highres.min.js -- dist/THREE.Highres.js",
-    "build:class": "cp src/highres.js dist/THREE.Highres-es6.js",
+    "build:class": "cp src/highres.js dist/THREE.Highres.es6.js",
     "pushall": "git add --all . && git commit -m \"update\" && git push",
     "update-dep": "npm-check-updates"
   },
@@ -26,30 +26,26 @@
   },
   "homepage": "https://github.com/taseenb/THREE.Highres#readme",
   "dependencies": {
-    "babel-polyfill": "^6.26.0",
     "browserify-fs": "^1.0.0",
     "downloadjs": "^1.4.7",
-    "npm-check-updates": "^2.12.1",
-    "pngjs": "^3.3.0",
-    "uglify-es": "^3.1.2"
+    "pngjs": "^3.3.0"
   },
   "devDependencies": {
+    "babel-polyfill": "^6.26.0",
     "babel-cli": "^6.26.0",
     "babel-preset-env": "^1.6.0",
     "babelify": "^7.3.0",
     "browserify": "^14.4.0",
+    "npm-check-updates": "^2.12.1",
     "npm-run-all": "^4.1.1",
-    "standard": "^10.0.3"
+    "standard": "^10.0.3",
+    "uglify-es": "^3.1.2"
   },
   "standard": {
-    "globals": [
-      "THREE"
-    ]
+    "globals": ["THREE"]
   },
   "browserify": {
-    "transform": [
-      "babelify"
-    ]
+    "transform": ["babelify"]
   },
   "babel": {
     "presets": [
@@ -57,9 +53,7 @@
         "env",
         {
           "targets": {
-            "browsers": [
-              "last 100 versions"
-            ]
+            "browsers": ["last 100 versions"]
           }
         }
       ]
