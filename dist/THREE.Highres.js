@@ -27690,7 +27690,6 @@ var Highres = function () {
     value: function initUI() {
       this.initDom();
       this.initStyles();
-      this.setupKeyEvents();
 
       this.onResize(true);
     }
@@ -27738,80 +27737,93 @@ var Highres = function () {
       console.info('Highres inactive.');
     }
   }, {
+    key: 'enable',
+    value: function enable() {
+      document.body.addEventListener('keyup', this.keyHandler.bind(this), false);
+    }
+  }, {
+    key: 'disable',
+    value: function disable() {
+      document.body.removeEventListener('keyup', this.keyHandler.bind(this));
+    }
+  }, {
     key: 'setupKeyEvents',
     value: function setupKeyEvents() {
+      document.body.addEventListener('keyup', this.keyHandler.bind(this));
+    }
+  }, {
+    key: 'keyHandler',
+    value: function keyHandler(e) {
       var _this = this;
 
-      document.body.addEventListener('keyup', function (e) {
-        if (_this.state.busy) return;
+      if (this.state.busy) return;
 
-        var start = function start() {
-          _this.activateUI();
-          // User function
-          if (_this.onStart) {
-            _this.onStart();
-          }
-        };
+      var start = function start() {
+        _this.activateUI();
+        // User function
+        if (_this.onStart) {
+          _this.onStart();
+        }
+      };
 
-        // Activate depth mode
-        if (e.key === '-') {
-          _this.set('mode', 'depth');
-          start();
+      // Activate depth mode
+      if (e.key === '-') {
+        this.set('mode', 'depth');
+        start();
+      }
+
+      // Activate diffuse mode
+      if (e.key === '+') {
+        this.set('mode', 'normal');
+        start();
+      }
+
+      // Deactivate
+      if (e.keyCode === 27) {
+        this.deactivateUI();
+
+        // User function
+        if (this.onExit) {
+          this.onExit();
+        }
+      }
+
+      // Start the high res capture by pressing any number
+      if (e.key.match(/^\d+$/)) {
+        if (!this.state.activeUI) {
+          console.warn('Highres is inactive. To activate press + (or - for depth rendering).');
+          return;
         }
 
-        // Activate diffuse mode
-        if (e.key === '+') {
-          _this.set('mode', 'normal');
-          start();
+        // User function
+        if (this.onBeforeRender) {
+          this.onBeforeRender();
         }
 
-        // Deactivate
-        if (e.keyCode === 27) {
-          _this.deactivateUI();
+        // Get factor
+        var factor = Math.min(parseInt(e.key), this.state.maxFactor);
+        this.set('factor', factor);
 
-          // User function
-          if (_this.onExit) {
-            _this.onExit();
-          }
-        }
+        // Show loader
+        this.showLoader();
 
-        // Start the high res capture by pressing any number
-        if (e.key.match(/^\d+$/)) {
-          if (!_this.state.activeUI) {
-            console.warn('Highres is inactive. To activate press + (or - for depth rendering).');
-            return;
-          }
+        // Save start time
+        this.set('startTime', Date.now());
 
-          // User function
-          if (_this.onBeforeRender) {
-            _this.onBeforeRender();
-          }
+        // Launch request (and restore renderer state when finished)
+        setTimeout(function () {
+          _this.request(factor).then(function (filename) {
+            _this.hideAllMessages();
+            _this.set('endTime', Date.now());
+            var duration = _this.get('endTime') - _this.get('startTime');
+            duration = (duration / 1000).toFixed(2);
 
-          // Get factor
-          var factor = Math.min(parseInt(e.key), _this.state.maxFactor);
-          _this.set('factor', factor);
-
-          // Show loader
-          _this.showLoader();
-
-          // Save start time
-          _this.set('startTime', Date.now());
-
-          // Launch request (and restore renderer state when finished)
-          setTimeout(function () {
-            _this.request(factor).then(function (filename) {
-              _this.hideAllMessages();
-              _this.set('endTime', Date.now());
-              var duration = _this.get('endTime') - _this.get('startTime');
-              duration = (duration / 1000).toFixed(2);
-
-              document.getElementById(_this.domId + '-filename').innerHTML = filename;
-              document.getElementById(_this.domId + '-duration').innerHTML = duration + ' seconds';
-              document.getElementById(_this.domId + '-complete').classList.add('show');
-            });
-          }, 250); // <<== important - tell the browser to finish everything before launching the request
-        }
-      });
+            document.getElementById(_this.domId + '-filename').innerHTML = filename;
+            document.getElementById(_this.domId + '-duration').innerHTML = duration + ' seconds';
+            document.getElementById(_this.domId + '-complete').classList.add('show');
+          });
+        }, 250); // <<== important - tell the browser to finish everything before launching the request
+      }
     }
   }, {
     key: 'showLoader',
