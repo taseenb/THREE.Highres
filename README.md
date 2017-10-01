@@ -13,17 +13,18 @@ Options:
 
 ```
 {
-onStart: () => {
-    // you can pause animations here, but leave orbit controls if possible
-},
-onBeforeRender: () => {
-    // make sure your application is not rendering at all now
-},
-onAfterRender: () => {
-    // you can restart rendering
-},
-onExit: () => {
-    // you can restart all your animations now
+    onStart: () => {
+        // you can pause animations here, but leave orbit controls if possible
+    },
+    onBeforeRender: () => {
+        // make sure your application is not rendering at all now
+    },
+    onAfterRender: () => {
+        // you can restart rendering
+    },
+    onExit: () => {
+        // you can restart all your animations now
+    }
 }
 ```
 
