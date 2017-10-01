@@ -34,7 +34,7 @@ Options:
     },
     onExit: () => {
         // triggered when you press ESC
-        // you can restart all your animations now
+        // you can restart your animations now
     }
 }
 ```
