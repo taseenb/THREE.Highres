@@ -15,11 +15,14 @@ Options:
 {
     onStart: () => {
         // triggered when you press + or -
-        // you can pause your animations here, but leave orbit controls if possible
+        // you can pause your animations here
+        // but leave orbit controls (or any navigation helper you need) 
+        // so you can still move in your scene and prepare the shot
     },
     onBeforeRender: () => {
-        // triggered when you choose a number
+        // triggered after you choose a number and the rendering is about to start
         // make sure your application is not rendering at all now
+        // stop all CPU/GPU intensive work
     },
     onAfterRender: () => {
         // triggered when the PNG is ready
