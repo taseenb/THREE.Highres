@@ -48,7 +48,6 @@ class Highres {
   initUI () {
     this.initDom()
     this.initStyles()
-    this.setupKeyEvents()
 
     this.onResize(true)
   }
@@ -98,85 +97,95 @@ class Highres {
     console.info('Highres inactive.')
   }
 
+  enable () {
+    document.body.addEventListener('keyup', this.keyHandler.bind(this), false)
+  }
+
+  disable () {
+    document.body.removeEventListener('keyup', this.keyHandler.bind(this))
+  }
+
   setupKeyEvents () {
-    document.body.addEventListener('keyup', e => {
-      if (this.state.busy) return
+    document.body.addEventListener('keyup', this.keyHandler.bind(this))
+  }
 
-      const start = () => {
-        this.activateUI()
-        // User function
-        if (this.onStart) {
-          this.onStart()
-        }
+  keyHandler (e) {
+    if (this.state.busy) return
+
+    const start = () => {
+      this.activateUI()
+      // User function
+      if (this.onStart) {
+        this.onStart()
+      }
+    }
+
+    // Activate depth mode
+    if (e.key === '-') {
+      this.set('mode', 'depth')
+      start()
+    }
+
+    // Activate diffuse mode
+    if (e.key === '+') {
+      this.set('mode', 'normal')
+      start()
+    }
+
+    // Deactivate
+    if (e.keyCode === 27) {
+      this.deactivateUI()
+
+      // User function
+      if (this.onExit) {
+        this.onExit()
+      }
+    }
+
+    // Start the high res capture by pressing any number
+    if (e.key.match(/^\d+$/)) {
+      if (!this.state.activeUI) {
+        console.warn(
+          'Highres is inactive. To activate press + (or - for depth rendering).'
+        )
+        return
       }
 
-      // Activate depth mode
-      if (e.key === '-') {
-        this.set('mode', 'depth')
-        start()
+      // User function
+      if (this.onBeforeRender) {
+        this.onBeforeRender()
       }
 
-      // Activate diffuse mode
-      if (e.key === '+') {
-        this.set('mode', 'normal')
-        start()
-      }
+      // Get factor
+      const factor = Math.min(parseInt(e.key), this.state.maxFactor)
+      this.set('factor', factor)
 
-      // Deactivate
-      if (e.keyCode === 27) {
-        this.deactivateUI()
+      // Show loader
+      this.showLoader()
 
-        // User function
-        if (this.onExit) {
-          this.onExit()
-        }
-      }
+      // Save start time
+      this.set('startTime', Date.now())
 
-      // Start the high res capture by pressing any number
-      if (e.key.match(/^\d+$/)) {
-        if (!this.state.activeUI) {
-          console.warn(
-            'Highres is inactive. To activate press + (or - for depth rendering).'
-          )
-          return
-        }
+      // Launch request (and restore renderer state when finished)
+      setTimeout(() => {
+        this.request(factor).then(filename => {
+          this.hideAllMessages()
+          this.set('endTime', Date.now())
+          let duration = this.get('endTime') - this.get('startTime')
+          duration = (duration / 1000).toFixed(2)
 
-        // User function
-        if (this.onBeforeRender) {
-          this.onBeforeRender()
-        }
-
-        // Get factor
-        const factor = Math.min(parseInt(e.key), this.state.maxFactor)
-        this.set('factor', factor)
-
-        // Show loader
-        this.showLoader()
-
-        // Save start time
-        this.set('startTime', Date.now())
-
-        // Launch request (and restore renderer state when finished)
-        setTimeout(() => {
-          this.request(factor).then(filename => {
-            this.hideAllMessages()
-            this.set('endTime', Date.now())
-            let duration = this.get('endTime') - this.get('startTime')
-            duration = (duration / 1000).toFixed(2)
-
-            document.getElementById(
-              this.domId + '-filename'
-            ).innerHTML = filename
-            document.getElementById(
-              this.domId + '-duration'
-            ).innerHTML = `${duration} seconds`
-            document
-              .getElementById(this.domId + '-complete')
-              .classList.add('show')
-          })
-        }, 250) // <<== important - tell the browser to finish everything before launching the request
-      }
-    })
+          document.getElementById(
+            this.domId + '-filename'
+          ).innerHTML = filename
+          document.getElementById(
+            this.domId + '-duration'
+          ).innerHTML = `${duration} seconds`
+          document
+            .getElementById(this.domId + '-complete')
+            .classList.add('show')
+        })
+      }, 250) // <<== important - tell the browser to finish everything before launching the request
+    }
   }
 
   showLoader () {
@@ -215,7 +224,9 @@ class Highres {
         this.set('factor', factor)
         this.set('busy', true)
 
-        console.log(`Highres (${w * factor} x ${h * factor}) rendering started.`)
+        console.log(
+          `Highres (${w * factor} x ${h * factor}) rendering started.`
+        )
         // console.log(this.state)
 
         // Wait
