@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>THREE.Highres demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000000;
+        }
+
+        .info {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            padding: 20px;
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 11px;
+            color: #FFFFFF;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="info">
+        <strong>Instructions:</strong>
+        <br><br> Press + (plus) to start a rendering.<br> 
+        Press - (minus) to start a depth map rendering.
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/87/three.min.js"></script>
+    <script src="dist/OrbitControls.js"></script>
+    <script src="dist/THREE.Highres.js"></script>
+    <script>
+        var scene = new THREE.Scene()
+        var renderer = new THREE.WebGLRenderer({
+            antialias: true
+        })
+        var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000)
+        camera.position.z = 200
+        camera.position.y = -50
+        camera.position.x = -50
+
+        renderer.setSize(window.innerWidth, window.innerHeight)
+        document.body.appendChild(renderer.domElement)
+        var orbit = new THREE.OrbitControls(camera, renderer.domElement);
+
+        // State
+        var state = {
+            paused: false,
+            pausedRenderer: false
+        }
+
+        // Highres setup
+        var options = {
+            onStart: () => {
+                this.state.paused = true
+            },
+            onBeforeRender: () => {
+                this.state.pausedRenderer = true
+            },
+            onAfterRender: () => {
+                this.state.pausedRenderer = false
+            },
+            onExit: () => {
+                this.state.paused = false
+            }
+        }
+
+        var highRes = new Highres(renderer, scene, camera, options)
+
+        // Light
+        var lights = []
+        lights[0] = new THREE.PointLight(0xffffff, 1, 0)
+        lights[1] = new THREE.PointLight(0xffffff, 1, 0)
+        lights[2] = new THREE.PointLight(0xffffff, 1, 0)
+
+        lights[0].position.set(0, 200, 0)
+        lights[1].position.set(100, 200, 100)
+        lights[2].position.set(- 100, - 200, - 100)
+
+        scene.add(lights[0])
+        scene.add(lights[1])
+        scene.add(lights[2])
+
+        // Mesh
+        var group = new THREE.Object3D()
+        var geometry = new THREE.TorusKnotGeometry(10, 3, 100, 16)
+        var mesh
+        var count = 20
+
+        for (var i = 0; i < count; i++) {
+            mesh = new THREE.Mesh(
+                geometry,
+                new THREE.MeshPhongMaterial({
+                    color: '#156289',
+                    emissive: '#072534',
+                    side: THREE.DoubleSide,
+                    flatShading: true
+                })
+            )
+            var x = 200 * Math.sin(i / (count - 1) * 2 * Math.PI) // (i % 2) * 100 - 50 // (Math.random() * 150) - 75
+            var y = 200 * Math.cos(i / (count - 1) * 2 * Math.PI) // (Math.random() * 30) - 15
+            var z = -i * 50// -1 * i * 50
+
+            if (i > 0) {
+                mesh.position.set(x, y, z)
+            } else {
+                mesh.scale.set(3, 3, 3)
+            }
+            group.add(mesh)
+        }
+
+        scene.add(group)
+
+        // Animate
+        var animate = function () {
+            requestAnimationFrame(animate)
+
+            if (!this.state.paused) {
+                group.children.forEach((mesh, i) => {
+                    mesh.rotation.x += 0.008 + i / 700
+                    mesh.rotation.y += 0.003 + i / 400
+                })
+            }
+
+            if (!this.state.pausedRenderer) {
+                renderer.render(scene, camera)
+            }
+        };
+        animate();
+    </script>
+</body>
+
+</html>

@@ -35,13 +35,7 @@ class Highres {
     this.set('maxFactor', maxFactor)
 
     this.initUI()
-    // this.initWebWorker()
   }
-
-  // initWebWorker () {
-  //   this.worker = new WebWorker('js/worker/highres-worker.js')
-  //   this.worker.on('PNGready', this.downloadPNG.bind(this))
-  // }
 
   set (key, value) {
     this.state[key] = value
@@ -88,11 +82,7 @@ class Highres {
     // Activate resize event
     window.addEventListener('resize', this.onResize.bind(this))
 
-    console.log(
-      `Ready to render a high resolution image. 
-        This operation is CPU and memory intensive.
-        If your browser crashes, please restart it before retrying.`
-    )
+    console.log('Highres active.')
   }
 
   deactivateUI () {
@@ -105,7 +95,7 @@ class Highres {
     // Remove resize event
     window.removeEventListener('resize', this.onResize.bind(this))
 
-    console.info('High resolution tool inactive.')
+    console.info('Highres inactive.')
   }
 
   setupKeyEvents () {
@@ -146,7 +136,7 @@ class Highres {
       if (e.key.match(/^\d+$/)) {
         if (!this.state.activeUI) {
           console.warn(
-            'The high resolution tool is inactive. To activate press + (or - for depth rendering).'
+            'Highres is inactive. To activate press + (or - for depth rendering).'
           )
           return
         }
@@ -205,8 +195,6 @@ class Highres {
 
   request (zoom) {
     if (!this.state.busy) {
-      console.log('High res rendering started. Zoom factor:', zoom)
-
       this.onResize(true)
 
       return new window.Promise((resolve, reject) => {
@@ -227,7 +215,8 @@ class Highres {
         this.set('factor', factor)
         this.set('busy', true)
 
-        console.log(this.state)
+        console.log(`Highres (${w * factor} x ${h * factor}) rendering started.`)
+        // console.log(this.state)
 
         // Wait
         this.onRendered = filename => resolve(filename)
@@ -461,7 +450,7 @@ class Highres {
       this.onAfterRender()
     }
 
-    console.log('High res rendering complete.')
+    console.log('Highres rendering complete.')
   }
 
   onResize (onlyUpdateState) {
@@ -598,7 +587,7 @@ class Highres {
       It took <strong id="${this.domId}-duration"></strong>. 
       The file <strong id="${this.domId}-filename"></strong> is ready.
       <br><br>
-      Press ESC to exit. Or + to start again.
+      Press ESC to exit. Press + or - to start again.
       `,
       this.domId + '-complete'
     )
@@ -637,12 +626,15 @@ class Highres {
   initStyles () {
     const css = `#${this.domId} {
         position: fixed;
-        z-index: 1000;
+        pointer-events: none;
+        z-index: 9999;
         width: 100%;
         height: 100%;
         top: 0;
         left: 0;
         display: none;
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 12px;
       }
   
       #${this.domId}.show {
@@ -733,4 +725,5 @@ class Highres {
   }
 }
 
+global.Highres = Highres
 module.exports = Highres

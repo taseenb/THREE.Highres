@@ -1,4 +1,4 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.window = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 (function (process){
 /* Copyright (c) 2013 Rod Vagg, MIT License */
 
@@ -27628,6 +27628,7 @@ function wrappy (fn, cb) {
 }
 
 },{}],161:[function(require,module,exports){
+(function (global){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -27672,13 +27673,7 @@ var Highres = function () {
     this.set('maxFactor', maxFactor);
 
     this.initUI();
-    // this.initWebWorker()
   }
-
-  // initWebWorker () {
-  //   this.worker = new WebWorker('js/worker/highres-worker.js')
-  //   this.worker.on('PNGready', this.downloadPNG.bind(this))
-  // }
 
   _createClass(Highres, [{
     key: 'set',
@@ -27726,7 +27721,7 @@ var Highres = function () {
       // Activate resize event
       window.addEventListener('resize', this.onResize.bind(this));
 
-      console.log('Ready to render a high resolution image. \n        This operation is CPU and memory intensive.\n        If your browser crashes, please restart it before retrying.');
+      console.log('Highres active.');
     }
   }, {
     key: 'deactivateUI',
@@ -27740,7 +27735,7 @@ var Highres = function () {
       // Remove resize event
       window.removeEventListener('resize', this.onResize.bind(this));
 
-      console.info('High resolution tool inactive.');
+      console.info('Highres inactive.');
     }
   }, {
     key: 'setupKeyEvents',
@@ -27783,7 +27778,7 @@ var Highres = function () {
         // Start the high res capture by pressing any number
         if (e.key.match(/^\d+$/)) {
           if (!_this.state.activeUI) {
-            console.warn('The high resolution tool is inactive. To activate press + (or - for depth rendering).');
+            console.warn('Highres is inactive. To activate press + (or - for depth rendering).');
             return;
           }
 
@@ -27838,8 +27833,6 @@ var Highres = function () {
       var _this2 = this;
 
       if (!this.state.busy) {
-        console.log('High res rendering started. Zoom factor:', zoom);
-
         this.onResize(true);
 
         return new window.Promise(function (resolve, reject) {
@@ -27862,7 +27855,8 @@ var Highres = function () {
           _this2.set('factor', factor);
           _this2.set('busy', true);
 
-          console.log(_this2.state);
+          console.log('Highres (' + w * factor + ' x ' + h * factor + ') rendering started.');
+          // console.log(this.state)
 
           // Wait
           _this2.onRendered = function (filename) {
@@ -28091,7 +28085,7 @@ var Highres = function () {
         this.onAfterRender();
       }
 
-      console.log('High res rendering complete.');
+      console.log('Highres rendering complete.');
     }
   }, {
     key: 'onResize',
@@ -28166,7 +28160,7 @@ var Highres = function () {
       this.html('<div class="title">Rendering</div>\n      <br><br>\n      Sit back and relax. A beautiful <span id="' + this.domId + '-width"></span> x <span id="' + this.domId + '-height"></span> \n      image (<span id="' + this.domId + '-dpi"></span> inches at 300 dpi) is on the way<span id="loader-dots">...</span>\n      <br><br>\n      The scene may resize and look distorted for a few seconds.\n      ', this.domId + '-loader');
 
       // Done message
-      this.html('<div class="title">Rendering completed</div>\n      <br><br>\n      It took <strong id="' + this.domId + '-duration"></strong>. \n      The file <strong id="' + this.domId + '-filename"></strong> is ready.\n      <br><br>\n      Press ESC to exit. Or + to start again.\n      ', this.domId + '-complete');
+      this.html('<div class="title">Rendering completed</div>\n      <br><br>\n      It took <strong id="' + this.domId + '-duration"></strong>. \n      The file <strong id="' + this.domId + '-filename"></strong> is ready.\n      <br><br>\n      Press ESC to exit. Press + or - to start again.\n      ', this.domId + '-complete');
 
       // Error message
       this.html('<div class="title">Erm...</div>\n      <br><br>\n      There was an error.\n      <br><br>\n      Press ESC to exit or reload the page.\n      ', this.domId + '-error');
@@ -28196,7 +28190,7 @@ var Highres = function () {
   }, {
     key: 'initStyles',
     value: function initStyles() {
-      var css = '#' + this.domId + ' {\n        position: fixed;\n        z-index: 1000;\n        width: 100%;\n        height: 100%;\n        top: 0;\n        left: 0;\n        display: none;\n      }\n  \n      #' + this.domId + '.show {\n        display: block;\n      }\n      \n      #' + this.domId + '-modal-wrapper {\n        position: absolute;\n        width: 37.5%;\n        min-width: 400px;\n        bottom: 20px;\n        left: 50%;\n        transform: translateX(-50%);\n      }\n  \n      #' + this.domId + '-modal {\n        position: relative;\n        width: 100%;\n        background-color: #FFF;\n        box-shadow: 0px 0px 30px 0px rgba(0,0,0,0.2);\n        padding: 20px;\n        color: #333;\n        font-size: 12px;\n        border-radius: 5px;\n        box-sizing: border-box;\n      }\n  \n      #' + this.domId + '-message {\n        \n      }\n  \n      .' + this.domId + '-msg-box {\n        display: none;\n      }\n      .' + this.domId + '-msg-box.show {\n        display: block;\n      }\n  \n      .title {\n        font-size: 14px;\n        font-weight: bold;\n      }\n  \n      .mode {\n        display: none;\n      }\n  \n      .mode.show {\n        display: block;\n      }\n  \n      #' + this.domId + '-loader {\n        \n      }\n  \n      #' + this.domId + '-complete {\n      }\n  \n      #' + this.domId + '-capture-area {\n        position: absolute;\n        box-sizing: content-box;\n        border: 1px solid #FFF;\n        // box-shadow:inset 0 0 20px 0 rgba(0,0,0,0.3);\n        box-shadow: 0 0 40px 0 rgba(0,0,0,0.5);\n        background-color: transparent;\n        left: 50%;\n        top: 50%;\n        transform: translateX(-50%) translateY(-50%);\n      }\n      ';
+      var css = '#' + this.domId + ' {\n        position: fixed;\n        pointer-events: none;\n        z-index: 9999;\n        width: 100%;\n        height: 100%;\n        top: 0;\n        left: 0;\n        display: none;\n        font-family: Helvetica, Arial, sans-serif;\n        font-size: 12px;\n      }\n  \n      #' + this.domId + '.show {\n        display: block;\n      }\n      \n      #' + this.domId + '-modal-wrapper {\n        position: absolute;\n        width: 37.5%;\n        min-width: 400px;\n        bottom: 20px;\n        left: 50%;\n        transform: translateX(-50%);\n      }\n  \n      #' + this.domId + '-modal {\n        position: relative;\n        width: 100%;\n        background-color: #FFF;\n        box-shadow: 0px 0px 30px 0px rgba(0,0,0,0.2);\n        padding: 20px;\n        color: #333;\n        font-size: 12px;\n        border-radius: 5px;\n        box-sizing: border-box;\n      }\n  \n      #' + this.domId + '-message {\n        \n      }\n  \n      .' + this.domId + '-msg-box {\n        display: none;\n      }\n      .' + this.domId + '-msg-box.show {\n        display: block;\n      }\n  \n      .title {\n        font-size: 14px;\n        font-weight: bold;\n      }\n  \n      .mode {\n        display: none;\n      }\n  \n      .mode.show {\n        display: block;\n      }\n  \n      #' + this.domId + '-loader {\n        \n      }\n  \n      #' + this.domId + '-complete {\n      }\n  \n      #' + this.domId + '-capture-area {\n        position: absolute;\n        box-sizing: content-box;\n        border: 1px solid #FFF;\n        // box-shadow:inset 0 0 20px 0 rgba(0,0,0,0.3);\n        box-shadow: 0 0 40px 0 rgba(0,0,0,0.5);\n        background-color: transparent;\n        left: 50%;\n        top: 50%;\n        transform: translateX(-50%) translateY(-50%);\n      }\n      ';
 
       this.appendStyle(css);
     }
@@ -28220,6 +28214,9 @@ var Highres = function () {
   return Highres;
 }();
 
+global.Highres = Highres;
 module.exports = Highres;
 
-},{"browserify-fs":16,"downloadjs":23,"pngjs":130}]},{},[161]);
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"browserify-fs":16,"downloadjs":23,"pngjs":130}]},{},[161])(161)
+});

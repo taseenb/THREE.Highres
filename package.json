@@ -4,7 +4,7 @@
   "description": "",
   "main": "src/highres.js",
   "scripts": {
-    "build": "browserify src/highres.js -o dist/THREE.Highres.js",
+    "build": "browserify src/highres.js --standalone window > dist/THREE.Highres.js",
     "pushall": "git add --all . && git commit -m \"update\" && git push",
     "update-dep": "npm-check-updates"
   },
