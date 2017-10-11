@@ -27719,8 +27719,6 @@ var Highres = function () {
 
       // Activate resize event
       window.addEventListener('resize', this.onResize.bind(this));
-
-      console.log('Highres active.');
     }
   }, {
     key: 'deactivateUI',
@@ -27733,8 +27731,6 @@ var Highres = function () {
 
       // Remove resize event
       window.removeEventListener('resize', this.onResize.bind(this));
-
-      console.info('Highres inactive.');
     }
   }, {
     key: 'enable',
@@ -27791,7 +27787,7 @@ var Highres = function () {
       // Start the high res capture by pressing any number
       if (e.key.match(/^\d+$/)) {
         if (!this.state.activeUI) {
-          console.warn('Highres is inactive. To activate press + (or - for depth rendering).');
+
           return;
         }
 
@@ -27867,7 +27863,6 @@ var Highres = function () {
           _this2.set('factor', factor);
           _this2.set('busy', true);
 
-          console.log('Highres (' + w * factor + ' x ' + h * factor + ') rendering started.');
           // console.log(this.state)
 
           // Wait
@@ -28096,8 +28091,6 @@ var Highres = function () {
       if (this.onAfterRender) {
         this.onAfterRender();
       }
-
-      console.log('Highres rendering complete.');
     }
   }, {
     key: 'onResize',
