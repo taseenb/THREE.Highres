@@ -26,19 +26,15 @@
   },
   "homepage": "https://github.com/taseenb/THREE.Highres#readme",
   "dependencies": {
+    "babelify": "7.3.0",
     "browserify-fs": "^1.0.0",
     "downloadjs": "^1.4.7",
-    "lodash": "^4.17.11",
     "pngjs": "^3.3.0",
-    "randomatic": "jonschlinkert/randomatic",
-    "semver": "npm/node-semver",
     "stripify": "^6.0.0"
   },
   "devDependencies": {
-    "babel-cli": "^6.26.0",
     "babel-polyfill": "^6.26.0",
     "babel-preset-env": "^1.6.0",
-    "babelify": "^10.0.0",
     "browserify": "^16.2.3",
     "npm-check-updates": "^2.12.1",
     "npm-run-all": "^4.1.1",
