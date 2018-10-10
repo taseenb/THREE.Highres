@@ -28,7 +28,10 @@
   "dependencies": {
     "browserify-fs": "^1.0.0",
     "downloadjs": "^1.4.7",
+    "lodash": "^4.17.11",
     "pngjs": "^3.3.0",
+    "randomatic": "jonschlinkert/randomatic",
+    "semver": "npm/node-semver",
     "stripify": "^6.0.0"
   },
   "devDependencies": {
