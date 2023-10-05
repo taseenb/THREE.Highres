@@ -241,38 +241,6 @@ class Highres {
     }
   }
 
-  /**
-   * Creates a new SMAAPass and ensures that images are fully loaded.
-   *
-   * @param {Function} done - A callback. The new SMAAPass will be passed to this function.
-   */
-  // createSMAAPass (done) {
-  //   this.smaaPass = new SMAAPass(window.Image)
-
-  //   const areaTexture = this.smaaPass.weightsMaterial.uniforms.tArea.value
-  //   const searchTexture = this.smaaPass.weightsMaterial.uniforms.tSearch.value
-
-  //   areaTexture.image.addEventListener('load', () => {
-  //     if (searchTexture.image.complete) {
-  //       // done(this.smaaPass)
-  //     }
-  //   })
-
-  //   searchTexture.image.addEventListener('load', () => {
-  //     if (areaTexture.image.complete) {
-  //       if (!searchTexture.image.complete) {
-  //         this.createSMAAPass(done)
-  //       } else {
-  //         done(this.smaaPass)
-  //       }
-  //     }
-  //   })
-
-  //   // Reload.
-  //   areaTexture.image.src = this.smaaPass.weightsMaterial.areaImage
-  //   searchTexture.image.src = this.smaaPass.weightsMaterial.searchImage
-  // }
-
   // Update the renderer with high res size and pixel ratio
   setupHighresRenderer () {
     this.camera.aspect = this.state.width / this.state.height
@@ -301,17 +269,6 @@ class Highres {
     this.rt = new THREE.WebGLRenderTarget(size.width, size.height)
     this.renderer.render(this.scene, this.camera, this.rt)
     this.finishRender(array, size)
-
-    // METHOD 2 - Postprocessing with SMAA (best quality, slower)
-    // this.createSMAAPass(smaaPass => {
-    //   this.composer = new EffectComposer(this.renderer)
-    //   this.composer.addPass(new RenderPass(this.scene, this.camera))
-    //   // const pass = new SMAAPass(window.Image) // buggy: image must be loaded async
-    //   this.composer.addPass(smaaPass)
-    //   this.composer.render()
-    //   this.rt = this.composer.writeBuffer
-    //   this.finishRender(array, size)
-    // })
   }
 
   renderDepth (array, size) {
